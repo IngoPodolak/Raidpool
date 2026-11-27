@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.19.4
+- „Dashboard in HA erzeugen“ trägt apexcharts-card und Bubble Card als Dashboard-Ressource ein, falls sie
+  installiert, aber nicht eingetragen sind (sonst zeigt HA bei den Tortendiagrammen „Konfigurationsfehler“).
+
 ## 0.19.3
 - **Schnelleres Kopieren vieler Dateien:** Der Pool hält Dateiinfos, Ordnerlisten und „gibt es nicht“-Antworten
   2 Sekunden im Zwischenspeicher. Samba prüft beim Anlegen jeder Datei, ob es sie (auch in anderer

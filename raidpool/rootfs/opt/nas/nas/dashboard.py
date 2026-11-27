@@ -153,5 +153,34 @@ def publish(app):
         ha_ws([{"type": "lovelace/dashboards/create", "url_path": URL_PATH, "title": "RAIDPool", "icon": "mdi:nas",
                 "show_in_sidebar": True, "require_admin": False, "mode": "storage"}])
     ha_ws([{"type": "lovelace/config/save", "url_path": URL_PATH, "config": cfg}])
+    added = ensure_resources()
     log.info("Dashboard /%s in Home Assistant geschrieben", URL_PATH)
-    return {"url": f"/{URL_PATH}", "cards": sum(len(s["cards"]) for s in cfg["views"][0]["sections"])}
+    return {"url": f"/{URL_PATH}", "cards": sum(len(s["cards"]) for s in cfg["views"][0]["sections"]),
+            "resources_added": added}
+
+
+# Benötigte Karten und ihr Pfad, wenn sie über den Marketplace (früher HACS) installiert sind
+CARDS = {"apexcharts-card": "/local/community/apexcharts-card/apexcharts-card.js",
+         "bubble-card": "/local/community/Bubble-Card/bubble-card.js"}
+
+
+def ensure_resources():
+    """Ist eine benötigte Karte installiert, aber nicht als Dashboard-Ressource eingetragen, zeigt HA
+    „Konfigurationsfehler“. Fehlende Einträge werden ergänzt. Gibt die ergänzten Karten zurück."""
+    try:
+        res = ha_ws([{"type": "lovelace/resources"}])[0] or []
+    except Exception as err:  # noqa: BLE001
+        log.info("Dashboard-Ressourcen nicht lesbar: %s", err)
+        return []
+    have = " ".join(str(r.get("url", "")).lower() for r in res)
+    added = []
+    for name, url in CARDS.items():
+        if name.lower() in have:
+            continue
+        try:
+            ha_ws([{"type": "lovelace/resources/create", "res_type": "module", "url": url}])
+            added.append(name)
+            log.info("Dashboard-Ressource %s ergänzt", url)
+        except Exception as err:  # noqa: BLE001
+            log.warning("Dashboard-Ressource %s nicht ergänzt: %s", url, err)
+    return added

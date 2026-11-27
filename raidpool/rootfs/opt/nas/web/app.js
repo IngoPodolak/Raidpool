@@ -407,5 +407,6 @@ refresh();
 
 window.makeDashboard = () => {
   if (!confirm("Dashboard „RAIDPool“ in Home Assistant anlegen bzw. aktualisieren?\n\nEs enthält Tortendiagramme (apexcharts-card) und Bubble Cards für alle Pools und Platten. Eigene Änderungen an diesem Dashboard werden dabei überschrieben.")) return;
-  act(async () => { const r = await api("ha/dashboard", {}); toast(`Dashboard erzeugt: ${r.url}`); });
+  act(async () => { const r = await api("ha/dashboard", {});
+    toast(`Dashboard erzeugt: ${r.url}` + ((r.resources_added || []).length ? ` · Karten eingetragen: ${r.resources_added.join(", ")} – Seite in HA einmal neu laden (Strg+F5)` : "")); });
 };
