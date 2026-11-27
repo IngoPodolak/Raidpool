@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.3
+- **Schnelleres Kopieren vieler Dateien:** Der Pool hält Dateiinfos, Ordnerlisten und „gibt es nicht“-Antworten
+  2 Sekunden im Zwischenspeicher. Samba prüft beim Anlegen jeder Datei, ob es sie (auch in anderer
+  Groß-/Kleinschreibung) schon gibt – vorher ging das jedes Mal durch alle Platten und beide Pool-Ebenen.
+  Kennt die installierte mergerfs-Version eine Option nicht, wird ohne eingehängt.
+
 ## 0.19.2
 - Live-Ansicht zeigt die CPU-Last je Programm im Add-on (Samba, mergerfs, NTFS-Treiber, RAIDPool) –
   hilft zu sehen, was einen Kopiervorgang bremst.

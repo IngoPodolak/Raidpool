@@ -10,6 +10,23 @@ from .util import read_mounts, run, slug
 
 log = logging.getLogger("nas")
 
+# Kurze Zwischenspeicher für Dateiinfos, Verzeichnislisten und „gibt es nicht“-Antworten: Samba prüft beim
+# Anlegen jeder Datei, ob es sie schon gibt (auch in anderer Groß-/Kleinschreibung) und listet dafür ggf.
+# den ganzen Ordner auf – ohne Zwischenspeicher geht das jedes Mal durch alle Platten. 2 s sind kurz genug,
+# dass direkte Änderungen auf den Platten (Mover, Duplizierung) praktisch sofort sichtbar sind.
+def _mergerfs(opts, branches, mp):
+    """mergerfs einhängen; kennt die installierte Version eine Zwischenspeicher-Option nicht, ohne sie."""
+    code, out, err = run(["mergerfs", "-o", ",".join(opts), branches, mp], timeout=60)
+    if code != 0 and any(o in opts for o in MERGERFS_TUNING):
+        log.warning("mergerfs mit Zwischenspeicher-Optionen fehlgeschlagen (%s) – ohne", err.strip())
+        plain = [o for o in opts if o not in MERGERFS_TUNING] + ["cache.files=off", "dropcacheonclose=true"]
+        code, out, err = run(["mergerfs", "-o", ",".join(plain), branches, mp], timeout=60)
+    return code, out, err
+
+
+MERGERFS_TUNING = ["cache.files=partial", "dropcacheonclose=true", "cache.attr=2", "cache.entry=2",
+                   "cache.negative_entry=2", "cache.readdir=true", "cache.statfs=5"]
+
 
 class PoolManager:
     def __init__(self, options, settings, disks, index):
@@ -136,14 +153,13 @@ class PoolManager:
         os.makedirs(mp, exist_ok=True)
         os.makedirs(hdd_mp, exist_ok=True)
         ro = self.options["read_only"]
-        opts = ["defaults", "allow_other", "cache.files=off", "dropcacheonclose=true",
-                "category.create=mfs", "moveonenospc=true", "minfreespace=20G",
+        opts = ["defaults", "allow_other"] + MERGERFS_TUNING + ["category.create=mfs", "moveonenospc=true", "minfreespace=20G",
                 f"fsname=raidpool-{pool['id']}" + ("-platten" if cache_on else "")]
         if ro:
             opts.append("ro")
         branch_str = ":".join(b[1] + ("=RO" if ro or not self.disks.is_writable(b[0]) else "=RW") for b in present)
         if not (hdd_mp in read_mounts()):
-            code, _, err = run(["mergerfs", "-o", ",".join(opts), branch_str, hdd_mp], timeout=60)
+            code, _, err = _mergerfs(opts, branch_str, hdd_mp)
             if code != 0:
                 self.errors[pool["id"]] = err.strip() or "mergerfs-Fehler"
                 raise RuntimeError(self.errors[pool["id"]])
@@ -153,14 +169,14 @@ class PoolManager:
             cdir = cache_dir(pool)
             os.makedirs(cdir, exist_ok=True)
             reserve = int(pool_cache_cfg(pool)["min_free_gb"])
-            copts = ["defaults", "allow_other", "cache.files=off", "dropcacheonclose=true", "category.create=ff",
+            copts = ["defaults", "allow_other"] + MERGERFS_TUNING + ["category.create=ff",
                      "moveonenospc=true", f"minfreespace={reserve}G", f"fsname=raidpool-{pool['id']}"]
-            code, _, err = run(["mergerfs", "-o", ",".join(copts), f"{cdir}=RW:{hdd_mp}=RW", mp], timeout=60)
+            code, _, err = _mergerfs(copts, f"{cdir}=RW:{hdd_mp}=RW", mp)
             if code != 0:
                 self.errors[pool["id"]] = f"SSD-Cache: {err.strip() or 'mergerfs-Fehler'}"
                 log.error("%s – Pool läuft ohne Cache", self.errors[pool["id"]])
                 run(["umount", hdd_mp])
-                code, _, err = run(["mergerfs", "-o", ",".join(opts), branch_str, mp], timeout=60)
+                code, _, err = _mergerfs(opts, branch_str, mp)
                 if code != 0:
                     raise RuntimeError(err.strip() or "mergerfs-Fehler")
                 return
