@@ -47,6 +47,7 @@ class DiskManager:
         self.forced_ro = set()   # uuids, die wegen Unsauberkeit nur lesend eingebunden sind
         self.dirty_policy = "readonly"   # readonly | repair | mount (wird von außen gesetzt)
         self.busy = set()        # uuids, die gerade geprüft werden (nicht automatisch einhängen)
+        self.allow_hiber = set() # uuids, bei denen der Windows-Ruhezustand verworfen werden darf
 
     # ------------------------------------------------------------ Erkennung
     def _lsblk(self):
@@ -203,16 +204,28 @@ class DiskManager:
             if read_only:
                 attempts.append(["mount", "-t", "ntfs3", "-o", f"{ro},iocharset=utf8", part["path"], mp])
             # ntfs-3g ist beim Schreiben der ausgereiftere Treiber
-            attempts.append(["ntfs-3g", "-o", f"{ro},windows_names,noatime" if not read_only else ro,
-                             part["path"], mp])
+            rw_opts = f"{ro},windows_names,noatime" + (",remove_hiberfile" if uuid in self.allow_hiber else "")
+            attempts.append(["ntfs-3g", "-o", rw_opts if not read_only else ro, part["path"], mp])
             if not read_only:
                 attempts.append(["mount", "-t", "ntfs3", "-o", f"{ro},iocharset=utf8,noatime", part["path"], mp])
         else:
             attempts.append(["mount", "-t", part["fstype"], "-o", f"{ro},noatime", part["path"], mp])
         last = ""
         for cmd in attempts:
-            code, _, err = run(cmd, timeout=120)
+            code, out, err = run(cmd, timeout=120)
             if code == 0:
+                actual_ro = self._is_ro(mp)
+                if not read_only and actual_ro:
+                    # ntfs-3g/ntfs3 weichen bei Windows-Schnellstart/Ruhezustand oder unsauberem Dateisystem
+                    # stillschweigend auf „nur lesend“ aus – sichtbar machen statt [rw] zu melden
+                    why = " ".join((out + " " + err).split())[:300]
+                    self.forced_ro.add(uuid)
+                    self.dirty[uuid] = ("Nur lesend eingehängt – Windows wurde nicht vollständig heruntergefahren "
+                                        "(Schnellstart/Ruhezustand) oder das Dateisystem ist unsauber. "
+                                        "„Prüfen und reparieren“ stellt den Schreibzugriff her."
+                                        + (f" Meldung: {why}" if why else ""))
+                    log.warning("%s nur lesend eingehängt (vom Treiber erzwungen): %s", part["path"], why or "-")
+                    ro = "ro"
                 log.info("%s (%s) eingehängt unter %s [%s]", part["path"], part["fstype"], mp, ro)
                 self.errors.pop(uuid, None)
                 return mp

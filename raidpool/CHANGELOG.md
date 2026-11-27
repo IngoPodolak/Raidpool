@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.12.2
+- **Schreibschutz erkannt:** Hängt der NTFS-Treiber eine Platte stillschweigend nur lesend ein (Windows-
+  Schnellstart/Ruhezustand oder unsauberes Dateisystem), zeigt RAIDPool das jetzt an („unsauber“ +
+  „nur lesend“) statt fälschlich [rw]. Vorher war dann der ganze Pool schreibgeschützt.
+- „Prüfen und reparieren“ verwirft bei NTFS einen vorhandenen Windows-Ruhezustand und stellt so den
+  Schreibzugriff wieder her.
+
 ## 0.12.1
 - **Wichtig:** Die Echtzeit-Überwachung belegt nicht mehr das gesamte inotify-Kontingent des Systems.
   Vorher konnten dadurch u. a. Netzwerkspeicher (Backup-Ziel) in Home Assistant nicht eingehängt werden

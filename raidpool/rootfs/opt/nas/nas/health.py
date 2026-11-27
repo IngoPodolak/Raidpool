@@ -338,6 +338,9 @@ class Health:
         c = self.check
         pools = [p for p in self.settings.data["pools"] if any(m["uuid"] == uuid for m in p["members"])]
         self.disks.busy.add(uuid)
+        if c["repair"] and part["fstype"] == "ntfs":
+            # Beim Wiedereinhängen einen evtl. vorhandenen Windows-Ruhezustand (Schnellstart) verwerfen
+            self.disks.allow_hiber.add(uuid)
         try:
             c["phase"] = "Platte aus dem Pool lösen"
             for p in pools:
