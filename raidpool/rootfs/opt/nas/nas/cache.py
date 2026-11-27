@@ -10,6 +10,7 @@ Cache-Ziel: die System-SSD von Home Assistant (Ordner /data/cache, nicht in HA-B
 eigene SSD/Partition (Ordner RAIDPoolCache/<pool>). Eine SSD kann von mehreren Pools geteilt werden.
 """
 import collections
+import fnmatch
 import datetime as dt
 import logging
 import os
@@ -34,7 +35,14 @@ DEFAULTS = {
     "move_after_min": 30,      # Dateien, die so lange nicht geändert wurden, werden verschoben (0 = nur nach Zeit/Füllstand)
     "move_at_pct": 80,         # ab diesem Füllstand des Cache sofort verschieben
     "move_time": "03:30",      # täglich alles verschieben
+    "hold_downloads": True,    # Download-/Archivteile auf der SSD halten, Ordner erst verschieben, wenn dort Ruhe ist
+    "hold_hours": 24,          # Archive höchstens so lange halten (danach – oder wenn die SSD voll wird – trotzdem)
 }
+
+# Teile von Downloads und Archiven – werden meist nach dem Entpacken gelöscht, sollen also nie auf die Platten
+HOLD_PATTERNS = ("*.part", "*.rar", "*.r[0-9][0-9]", "*.7z", "*.7z.[0-9][0-9][0-9]", "*.zip", "*.z[0-9][0-9]",
+                 "*.[0-9][0-9][0-9]", "*.crdownload", "*.!qb", "*.tmp", "*.temp", "*.download", "*.jdc",
+                 "*.part[0-9]*.rar", "*.tar", "*.gz")
 
 
 def pool_cache_cfg(pool):
@@ -370,7 +378,17 @@ class CacheManager:
             return
         st = self.state.setdefault(pid, {})
         files = []
+        hold = c.get("hold_downloads", True)
+        dir_age = {}
+        now0 = time.time()
         for r, _, names in os.walk(root):
+            if hold:
+                # Ordner gilt als „in Arbeit“, solange darin Dateien angelegt/umbenannt/gelöscht werden
+                # (z. B. Download läuft oder JDownloader entpackt gerade)
+                try:
+                    dir_age[r] = now0 - os.stat(r).st_mtime
+                except OSError:
+                    dir_age[r] = 0
             for n in names:
                 if n.startswith(TMP):
                     continue
@@ -392,12 +410,28 @@ class CacheManager:
         target_bytes = limit * 0.5 if pressure else 0
         todo = []
         remaining = total
+        quiet = max(c["move_after_min"], 5) * 60
+        held = []
         for age_ts, size, rel in files:
             age = now - age_ts
             if age < 60:
                 continue                   # gerade erst geschrieben
+            if hold and mode != "all":
+                name = os.path.basename(rel).lower()
+                if any(fnmatch.fnmatch(name, pat) for pat in HOLD_PATTERNS) and age < c.get("hold_hours", 24) * 3600:
+                    held.append((rel, size))       # Archivteil: bleibt, außer die SSD wird voll
+                    continue
+                if dir_age.get(os.path.join(root, os.path.dirname(rel)).rstrip("/"), quiet) < quiet and not pressure:
+                    continue                       # im Ordner tut sich noch etwas (Download/Entpacken)
             if mode == "all" or (c["move_after_min"] and age >= c["move_after_min"] * 60) or \
                     (pressure and remaining > target_bytes):
+                todo.append((rel, size))
+                remaining -= size
+        if pressure and remaining > target_bytes:
+            # SSD wird voll: dann auch Archivteile verschieben (älteste zuerst)
+            for rel, size in held:
+                if remaining <= target_bytes:
+                    break
                 todo.append((rel, size))
                 remaining -= size
         if not todo:

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.19.0
+- **Downloads auf der SSD fertigstellen** (SSD-Cache, standardmäßig an): Archiv- und Downloadteile (.rar,
+  .part, .7z, .zip, .001 …) bleiben auf der SSD (bis 24 h einstellbar) – sie werden nach dem Entpacken
+  meist gelöscht und müssen so nie auf die Platten. Ein Ordner wird erst verschoben, wenn darin die
+  eingestellte Zeit nichts mehr passiert ist (Download bzw. Entpacken fertig). Wird die SSD voll, wird
+  trotzdem verschoben.
+
 ## 0.18.0
 - **Vorrang für Kopiervorgänge:** Wird über die Freigaben viel geschrieben (Datei zum Schreiben geöffnet und
   mehr als 20 MB/s), pausieren Scans, nächtlicher Abgleich, Ausbalancieren und Duplikatsuche. Neue Dateien

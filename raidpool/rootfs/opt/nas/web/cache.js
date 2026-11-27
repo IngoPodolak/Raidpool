@@ -24,7 +24,7 @@ window.cacheLine = (p) => {
 
 window.cacheDialog = async (pid) => {
   const p = state.status.pools.find((x) => x.id === pid);
-  const cfg = Object.assign({ enabled: false, target: "system", max_gb: 50, min_free_gb: 20, move_after_min: 30, move_at_pct: 80, move_time: "03:30" }, (p.cache || {}).config || {});
+  const cfg = Object.assign({ enabled: false, target: "system", max_gb: 50, min_free_gb: 20, move_after_min: 30, move_at_pct: 80, move_time: "03:30", hold_downloads: true, hold_hours: 24 }, (p.cache || {}).config || {});
   let targets = [];
   try { targets = await api("cache/targets"); } catch (e) { toast(e.message); }
   $("#dlg-body").innerHTML = `<h2>SSD-Cache für ${esc(p.name)}</h2>
@@ -44,7 +44,11 @@ window.cacheDialog = async (pid) => {
       <div class="field"><label>Verschieben nach … Minuten ohne Änderung (0 = nur nachts/bei Füllstand)</label><input type="number" id="cc-age" min="0" value="${cfg.move_after_min}"></div>
       <div class="field"><label>Sofort verschieben ab Füllstand (%)</label><input type="number" id="cc-pct" min="10" max="100" value="${cfg.move_at_pct}"></div>
       <div class="field"><label>Täglich alles verschieben um</label><input type="time" id="cc-time" value="${esc(cfg.move_time)}"></div>
+      <div class="field"><label>Archivteile höchstens … Stunden halten</label><input type="number" id="cc-hold" min="1" max="720" value="${cfg.hold_hours}"></div>
     </div>
+    <label class="row small"><input type="checkbox" id="cc-dl" ${cfg.hold_downloads ? "checked" : ""}> Downloads auf der SSD fertigstellen
+      <span class="muted">– Archiv-/Downloadteile (.rar, .part, .7z, .zip …) bleiben auf der SSD (werden nach dem Entpacken meist gelöscht);
+      ein Ordner wird erst verschoben, wenn darin so viele Minuten nichts mehr passiert ist (Download/Entpacken fertig). Wird die SSD voll, wird trotzdem verschoben.</span></label>
     <p class="muted small">Bei der System-SSD unbedingt genug für Home Assistant frei lassen. Beim Ein-/Ausschalten oder Wechsel der SSD wird der Pool kurz neu eingehängt
       (SMB-Verbindungen zu diesem Pool werden kurz unterbrochen); beim Ausschalten wird der Cache vorher geleert.</p>
     <div class="row" style="justify-content:flex-end"><button type="button" class="btn" onclick="$('#dlg').close()">Abbrechen</button>
@@ -52,7 +56,8 @@ window.cacheDialog = async (pid) => {
   $("#cc-ok").onclick = async () => {
     const t = document.querySelector('input[name="cc-t"]:checked');
     const body = { pool: pid, enabled: $("#cc-en").checked, target: t ? t.value : "system", max_gb: +$("#cc-max").value,
-      min_free_gb: +$("#cc-free").value, move_after_min: +$("#cc-age").value, move_at_pct: +$("#cc-pct").value, move_time: $("#cc-time").value };
+      min_free_gb: +$("#cc-free").value, move_after_min: +$("#cc-age").value, move_at_pct: +$("#cc-pct").value, move_time: $("#cc-time").value,
+      hold_downloads: $("#cc-dl").checked, hold_hours: +$("#cc-hold").value };
     const btn = $("#cc-ok"); btn.disabled = true; btn.textContent = "Speichere …";
     try { await api("pools/cache", body); $("#dlg").close(); toast("SSD-Cache gespeichert"); }
     catch (e) { btn.disabled = false; btn.textContent = "Speichern"; toast("Fehler: " + e.message); }
