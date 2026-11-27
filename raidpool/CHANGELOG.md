@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.13.1
+- **Keine Fehlalarme „Platte ausgefallen“ mehr bei Last:** Antwortet eine Platte nur langsam (z. B. Scan
+  und Downloads gleichzeitig), ist das Gerät aber vorhanden, wird sie bis zu 5 Minuten beobachtet statt
+  sofort aus dem Pool genommen. Echte Ausfälle (Platte weg) werden weiter sofort erkannt.
+
 ## 0.13.0
 - **Echtzeit-Duplizierung über Samba:** Jede über die Freigaben geschriebene, umbenannte oder gelöschte
   Datei meldet Samba direkt an RAIDPool – unabhängig von der Ordnerzahl (der HAOS-Kernel hat kein

@@ -48,6 +48,7 @@ class Health:
         self.dupes = dupes
         self.stop = threading.Event()
         self.failed = {}                 # (pool, uuid) -> seit
+        self.slow = {}                   # (pool, uuid) -> seit wann die Platte nicht antwortet
         self.events = collections.deque(maxlen=100)
         self.ups = {"state": None, "on_battery": False, "battery": None, "paused": False, "unmounted": False}
         self.check = None                # laufende Dateisystem-Prüfung
@@ -130,14 +131,40 @@ class Health:
                 mp = os.path.join(config.DISK_MNT, uuid)
                 branch = os.path.join(mp, m["poolpart"]) if m.get("poolpart") not in (None, "", ".") else mp
                 mounted = config.DEV or mp in mounts
-                ok = mounted and self._alive(branch)
+                ok = mounted and self._alive(branch, timeout=30)
+                if ok:
+                    self.slow.pop(key, None)
+                elif mounted and key not in self.failed and self._device_present(uuid):
+                    # Platte ist noch da, antwortet aber nicht schnell genug (z. B. Scan + Downloads
+                    # gleichzeitig). Erst nach 5 Minuten am Stück als Ausfall werten – sonst würde sie
+                    # mitten im Schreiben aus dem Pool genommen.
+                    first = self.slow.setdefault(key, time.time())
+                    if time.time() - first < 300:
+                        if time.time() - first < 25:
+                            log.warning("Platte %s antwortet langsam – wird weiter beobachtet", self._label(uuid))
+                        continue
                 if not ok and key not in self.failed:
+                    self.slow.pop(key, None)
                     self._on_failure(pool, uuid, mp)
                 elif key in self.failed:
                     if ok:
                         self._on_return(pool, uuid)
                     elif not mounted:
                         self._try_remount(pool, uuid)
+
+    def _device_present(self, uuid):
+        """Blockgerät der Platte noch vorhanden und vom Kernel als laufend gemeldet?"""
+        if config.DEV:
+            return True
+        disk, part = self.disks.partition(uuid)
+        dev = os.path.basename((disk or {}).get("path") or "")
+        if not dev or not part or not os.path.exists(part.get("path") or ""):
+            return False
+        try:
+            with open(f"/sys/block/{dev}/device/state", encoding="utf-8") as fh:
+                return fh.read().strip() == "running"
+        except OSError:
+            return os.path.exists(f"/sys/block/{dev}")
 
     def _on_failure(self, pool, uuid, mp):
         self.failed[(pool["id"], uuid)] = int(time.time())
