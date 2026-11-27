@@ -57,6 +57,26 @@ Platten → Partition → **Prüfen** bzw. **Prüfen und reparieren**. Für NTFS
 zuletzt unsauber an Windows hingen, besser unter Windows prüfen). Ist `ntfsck` nicht verfügbar, wird
 `ntfsfix` genutzt (nur grundlegende Reparaturen). „Oberflächentest“ startet den SMART-Selbsttest der Platte.
 
+## Integration in Home Assistant
+
+Läuft der **Mosquitto-Broker** (offizielles Add-on), legt HA RAIDPool automatisch Geräte und
+Entitäten an – keine zusätzliche Installation nötig:
+
+- **HA RAIDPool**: Schalter SMB-Freigaben, Duplizierung, Direktfreigaben; Tasten Abgleich,
+  Ausbalancieren, Duplikatsuche, SMART aktualisieren; Sensoren Duplikate, Warteschlange,
+  SMB-Verbindungen, Problem, USV.
+- **Pool …**: Belegt, Frei, Gesamt, Daten, Dateien, unter Soll, abweichende Kopien, Problem,
+  Eingehängt; Tasten Neu scannen und Abgleich.
+- **Platte …**: Temperatur, Zustand, Belegt, Betriebsstunden, Anläufe, Kopf-Parkvorgänge,
+  Problem und Schalter **Direktfreigabe**.
+
+## Direktfreigaben
+
+Freigaben → **Direktfreigaben der Platten**: jede Platte eines Pools zusätzlich als eigene
+Freigabe `\\server\Platte-<Name>` mit ihrem kompletten Inhalt. Hauptschalter und Schalter pro
+Platte – auch in HA (`switch.raidpool_direktfreigaben`, `switch.raidpool_platte_…_direktfreigabe`).
+Wird eine einzelne Platte eingeschaltet, während die Funktion aus ist, wird nur diese freigegeben.
+
 ## Netzwerkfreigaben
 
 Unter **Platten → + Netzwerkfreigabe** lassen sich SMB- (Windows, Synology, QNAP, …) und

@@ -31,7 +31,9 @@ SHARE_RE = re.compile(r'^[^\\/:*?"<>|\[\];=,+]{1,64}$')
 DEFAULT_SMB = {"enabled": True, "workgroup": "WORKGROUP", "server_name": "", "wsdd": True,
                "netbios": False, "min_protocol": "SMB2_10",
                "aliases": [],          # weitere Servernamen, z. B. „SERVER“ (alter Windows-Server)
-               "extra_ips": []}        # weitere IP-Adressen, z. B. die alte IP des Windows-Servers
+               "extra_ips": [],        # weitere IP-Adressen, z. B. die alte IP des Windows-Servers
+               # Direktfreigaben: jede Platte eines Pools zusätzlich als eigene Freigabe
+               "direct": {"enabled": False, "disks": {}, "access": {}, "browseable": True}}
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,14}$")
 IP_RE = re.compile(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(/(\d{1,2}))?$")
 ACCESS = ("none", "ro", "rw")
@@ -385,6 +387,60 @@ class SambaManager:
             self.settings.save()
         self.apply()
 
+    # ------------------------------------------------------------ Direktfreigaben der Platten
+    def direct_cfg(self):
+        d = {"enabled": False, "disks": {}, "access": {}, "browseable": True}
+        d.update(self.cfg().get("direct") or {})
+        return d
+
+    def direct_list(self):
+        """Alle Platten aus Pools mit Name der Direktfreigabe und Schaltzustand."""
+        d = self.direct_cfg()
+        disks = self.pools.disks
+        out, names = [], set()
+        for pool in self.settings.data["pools"]:
+            for m in pool["members"]:
+                disk, part = disks.partition(m["uuid"])
+                if (disk or {}).get("network") or any(o["uuid"] == m["uuid"] for o in out):
+                    continue
+                label = (part or {}).get("label") or (disk or {}).get("model") or m["uuid"][:8]
+                base = "Platte-" + re.sub(r"[^A-Za-z0-9._-]+", "-", label).strip("-")[:50]
+                name, n = base, 2
+                while name.lower() in names:
+                    name, n = f"{base}-{n}", n + 1
+                names.add(name.lower())
+                on = bool(d["enabled"]) and d["disks"].get(m["uuid"], True)
+                out.append({"uuid": m["uuid"], "name": name, "label": label, "pool": pool["id"],
+                            "pool_name": pool["name"], "on": on, "disk_on": d["disks"].get(m["uuid"], True),
+                            "mounted": bool(part and part["mountpoint"]),
+                            "path": os.path.join(config.DISK_MNT, m["uuid"]),
+                            "unc": f"\\\\{self.server_name()}\\{name}"})
+        return out
+
+    def set_direct(self, enabled=None, uuid=None, on=None, access=None, browseable=None):
+        known = [d["uuid"] for d in self.direct_list()]
+        with self.settings.lock:
+            cur = self.settings.data.setdefault("smb", {})
+            d = cur.setdefault("direct", {"enabled": False, "disks": {}, "access": {}, "browseable": True})
+            d.setdefault("disks", {})
+            if enabled is not None:
+                d["enabled"] = bool(enabled)
+            if uuid is not None and on is not None:
+                if on and not d["enabled"]:
+                    # Funktion war aus: nur diese Platte freigeben, die anderen bleiben aus
+                    for u in known:
+                        if u != uuid:
+                            d["disks"][u] = False
+                    d["enabled"] = True
+                d["disks"][uuid] = bool(on)
+            if access is not None:
+                d["access"] = {k: v for k, v in access.items() if v in ACCESS}
+            if browseable is not None:
+                d["browseable"] = bool(browseable)
+            self.settings.save()
+        self.apply()
+        return self.direct_cfg()
+
     def share_path(self, s):
         base = self.pools.mountpoint({"id": s["pool"]})
         return os.path.join(base, s["path"]) if s["path"] else base
@@ -568,6 +624,28 @@ class SambaManager:
                 if s.get("tm_size_gb"):
                     lines.append(f"   fruit:time machine max size = {int(s['tm_size_gb'])}G")
             lines.append("")
+        # Direktfreigaben der einzelnen Platten
+        dcfg = self.direct_cfg()
+        enabled_users = {u["name"] for u in self.users() if u.get("enabled", True)}
+        for ds in self.direct_list():
+            if not ds["on"]:
+                continue
+            acc = {u: a for u, a in dcfg["access"].items() if u in enabled_users and a != "none"}
+            rw = sorted(u for u, a in acc.items() if a == "rw")
+            ro = sorted(u for u, a in acc.items() if a == "ro")
+            disk_ro = ro_global or not self.pools.disks.is_writable(ds["uuid"])
+            lines += [f"[{ds['name']}]",
+                      f"   path = {ds['path']}",
+                      f"   comment = Direkter Zugriff auf {ds['label']} (Pool {ds['pool_name']})",
+                      f"   browseable = {'yes' if dcfg['browseable'] else 'no'}",
+                      "   force user = root", "   force group = root",
+                      "   create mask = 0664", "   directory mask = 0775",
+                      "   veto files = /.nas-trash/",
+                      f"   valid users = {' '.join(rw + ro) if rw + ro else 'root'}",
+                      f"   read only = {'yes' if disk_ro else 'no'}"]
+            if ro and not disk_ro:
+                lines.append(f"   read list = {' '.join(ro)}")
+            lines.append("")
         return "\n".join(lines)
 
     def write_usermap(self):
@@ -720,6 +798,7 @@ class SambaManager:
                                                    path_ok=config.DEV or os.path.isdir(self.share_path(s)))
                                               for s in self.shares()],
             "sessions": self.sessions(),
+            "direct": dict(self.direct_cfg(), shares=self.direct_list()),
             "ips": [dict(self.ip_state.get(ip, {"active": False, "error": None}), ip=ip) for ip in c["extra_ips"]],
             "own_ips": sorted(self.own_ips()) if not config.DEV else ["192.168.0.50"],
         }

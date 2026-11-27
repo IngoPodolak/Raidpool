@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.0
+- **Integration in Home Assistant über MQTT-Discovery** – kommt automatisch mit dem Add-on, sobald
+  der Mosquitto-Broker läuft. Geräte für Add-on, jeden Pool und jede Platte mit Sensoren,
+  Problem-Sensoren, Schaltern (SMB, Duplizierung, Direktfreigaben) und Tasten (Abgleich,
+  Ausbalancieren, Scan, Duplikatsuche, SMART). Entfernte Platten verschwinden auch aus HA.
+  Ohne Broker werden wie bisher einfache Sensoren gesetzt.
+- **Direktfreigaben**: jede Platte eines Pools zusätzlich als eigene Freigabe (`\\server\Platte-<Name>`),
+  Haupt- und Einzelschalter in der Oberfläche und als Schalter in HA, eigene Zugriffsrechte.
+
 ## 0.8.0
 - **Weitere Servernamen**: HA ist zusätzlich z. B. als `\\SERVER` erreichbar (NetBIOS-Alias),
   mit Prüfung, ob der Name im Netzwerk noch belegt ist.

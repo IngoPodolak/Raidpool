@@ -14,6 +14,7 @@ from . import config, sensors
 from .disks import DiskManager
 from .dupes import DupeFinder
 from .health import Health
+from .mqtt import MqttBridge
 from .index import Index
 from .netshares import NetShares
 from .pools import PoolManager
@@ -24,7 +25,7 @@ from .smb import SambaManager
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 INGRESS_IP = "172.30.32.2"
-VERSION = "0.8.0"
+VERSION = "0.9.0"
 
 log = logging.getLogger("nas")
 
@@ -48,6 +49,9 @@ class App:
         self.smb = SambaManager(self.options, self.settings, self.pools)
         self.rep = Replicator(self.options, self.settings, self.pools, self.index)
         self.health = Health(self.options, self.settings, self.disks, self.pools, self.rep, self.dupes)
+        self.version = VERSION
+        self.mqtt = MqttBridge(self)
+        self.mqtt.cleanup_previous()
         self.stop = threading.Event()
 
     def start(self):
@@ -72,6 +76,7 @@ class App:
         threading.Thread(target=self.dupes.scheduler_loop, daemon=True, name="dupe-scheduler").start()
         threading.Thread(target=self._smart_loop, daemon=True, name="smart").start()
         if self.options["publish_sensors"]:
+            self.mqtt.start()
             threading.Thread(target=self._sensor_loop, daemon=True, name="sensors").start()
 
     def _smart_loop(self):
@@ -84,7 +89,8 @@ class App:
         while not self.stop.is_set():
             try:
                 self.disks.refresh()
-                sensors.publish(self.pool_states(), self.disks.disks, self.smart)
+                if not self.mqtt.connected:      # mit MQTT übernimmt die Integration die Sensoren
+                    sensors.publish(self.pool_states(), self.disks.disks, self.smart)
             except Exception:  # noqa: BLE001
                 log.exception("Sensoren konnten nicht aktualisiert werden")
             self.stop.wait(self.options["sensor_interval_seconds"])
@@ -129,7 +135,7 @@ class App:
     def api_get(self, path, q):
         g = lambda k, d=None: (q.get(k) or [d])[0]  # noqa: E731
         if path == "status":
-            return {"version": VERSION, "options": self.options, "dev": config.DEV,
+            return {"version": VERSION, "options": self.options, "dev": config.DEV, "mqtt": self.mqtt.status(),
                     "pools": self.pool_states(), "candidates": self.drivepool_candidates()}
         if path == "disks":
             self.disks.refresh()
@@ -266,6 +272,9 @@ class App:
                 self.smb.set_password(body["name"], body.get("password"))
             elif action == "user/enabled":
                 self.smb.set_user_enabled(body["name"], body.get("enabled", True))
+            elif action == "direct":
+                return self.smb.set_direct(body.get("enabled"), body.get("uuid"), body.get("on"),
+                                           body.get("access"), body.get("browseable"))
             elif action == "user/logins":
                 self.smb.set_logins(body["name"], body.get("logins") or [])
             elif action == "check_name":
@@ -447,6 +456,7 @@ def main():
         app.smb.stop_evt.set()
         app.rep.stop.set()
         app.health.stop.set()
+        app.mqtt.stop.set()
         app.smb.shutdown()
         threading.Thread(target=server.shutdown, daemon=True).start()
 

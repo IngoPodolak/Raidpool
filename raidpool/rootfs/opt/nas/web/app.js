@@ -69,7 +69,10 @@ function renderOverview() {
     el.innerHTML = `<div class="card empty">Noch kein Pool eingerichtet.<br><br><button class="btn primary" onclick="openCreate(${s.candidates.length > 0})">Pool anlegen</button></div>`;
     return;
   }
-  el.innerHTML = `<div class="row spread"><h2>Pools</h2><button class="btn" onclick="openCreate(false)">+ Pool</button></div><div class="grid">` +
+  const mq = s.mqtt || {};
+  const integ = mq.connected ? `<div class="small muted" style="margin:-6px 0 10px">🔗 In Home Assistant eingebunden über MQTT · ${fmtNum(mq.entities)} Entitäten</div>`
+    : `<div class="small muted" style="margin:-6px 0 10px">🔗 ${esc(mq.error || "Verbinde mit Home Assistant …")}</div>`;
+  el.innerHTML = `<div class="row spread"><h2>Pools</h2><button class="btn" onclick="openCreate(false)">+ Pool</button></div>${integ}<div class="grid">` +
     s.pools.map((p) => {
       const sc = p.scan || {}; const running = sc.status === "läuft";
       const pct = p.space.total ? Math.round((100 * (p.space.total - p.space.free)) / p.space.total) : 0;

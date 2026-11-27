@@ -44,6 +44,8 @@ window.renderShares = async function () {
   ${st.shares.length ? `<div class="grid">${st.shares.map(shareCard).join("")}</div>`
     : '<div class="card empty">Noch keine Freigabe. Gib den ganzen Pool oder einzelne Ordner daraus frei – beides gleichzeitig ist möglich.</div>'}
 
+  ${directCard(st)}
+
   <div class="row spread" style="margin-top:8px"><h2>Benutzer</h2><div class="row">
     <button class="btn" onclick="importHaUsers()">Aus Home Assistant übernehmen</button>
     <button class="btn" onclick="userDialog()">+ Benutzer</button></div></div>
@@ -349,3 +351,30 @@ function importPick(list) {
     refresh();
   };
 }
+
+// ---------------------------------------------------------------- Direktfreigaben der Platten
+function directCard(st) {
+  const d = st.direct || { enabled: false, shares: [], access: {} };
+  return `<div class="row spread" style="margin-top:8px"><h2>Direktfreigaben der Platten</h2>
+      <label class="row small"><input type="checkbox" ${d.enabled ? "checked" : ""} onchange="setDirect({enabled:this.checked})"> eingeschaltet</label></div>
+    <div class="card">
+      <p class="muted small" style="margin-top:0">Jede Platte eines Pools zusätzlich als eigene Freigabe – mit dem kompletten Inhalt der Platte
+        (PoolPart-Ordner und sonstige Dateien). Schaltbar auch in Home Assistant: <span class="mono">switch.raidpool_direktfreigaben</span> und ein Schalter pro Platte.
+        Änderungen an Pool-Dateien über eine Direktfreigabe werden von der Duplizierung erkannt.</p>
+      ${d.shares.length ? d.shares.map((x) => `<div class="row spread" style="padding:8px 0;border-top:1px solid var(--line)">
+          <div><b>💽 ${esc(x.label)}</b> <span class="muted small">Pool ${esc(x.pool_name)}</span><br>
+            <span class="mono small ${x.on ? "" : "muted"}">${esc(x.unc)}</span>${x.mounted ? "" : ' <span class="badge bad">nicht eingehängt</span>'}</div>
+          <div class="row">${x.on ? `<button class="btn" style="padding:2px 8px" title="Kopieren" onclick='copyText(${js(x.unc)})'>⧉</button>` : ""}
+            <label class="row small"><input type="checkbox" ${x.on ? "checked" : ""} onchange='setDirect({uuid:${js(x.uuid)}, on:this.checked})'> freigegeben</label></div></div>`).join("")
+        : '<div class="muted small">Noch keine Platten in einem Pool.</div>'}
+      <h3>Zugriff auf alle Direktfreigaben</h3>
+      ${sh.st.users.length ? sh.st.users.map((u) => `<div class="row spread acc-row"><span>👤 ${esc(u.display || u.name)}</span>${accSeg(u.name, d.access[u.name] || "none", "dirAcc")}</div>`).join("")
+        : '<div class="muted small">Noch keine Benutzer.</div>'}
+      <label class="row small" style="margin-top:8px"><input type="checkbox" ${d.browseable !== false ? "checked" : ""} onchange="setDirect({browseable:this.checked})"> Im Netzwerk sichtbar</label>
+    </div>`;
+}
+window.setDirect = (body) => act(() => api("smb/direct", body), "Gespeichert");
+window.dirAcc = (name, a) => {
+  const acc = Object.assign({}, (sh.st.direct || {}).access || {}); acc[name] = a;
+  act(() => api("smb/direct", { access: acc }), "Zugriff gespeichert");
+};
