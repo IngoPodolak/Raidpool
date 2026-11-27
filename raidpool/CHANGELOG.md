@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.18.0
+- **Vorrang für Kopiervorgänge:** Wird über die Freigaben viel geschrieben (Datei zum Schreiben geöffnet und
+  mehr als 20 MB/s), pausieren Scans, nächtlicher Abgleich, Ausbalancieren und Duplikatsuche. Neue Dateien
+  werden weiter sofort bearbeitet. Die Live-Ansicht zeigt „Kopiervorgang erkannt“.
+- **SSD-Cache → Platten parallel:** Der Mover schreibt mehrere Dateien gleichzeitig auf verschiedene
+  Platten (eine Datei je Platte) und legt dabei direkt die Soll-Anzahl Kopien an – einmal von der SSD
+  lesen, auf zwei Platten gleichzeitig schreiben. Kein zusätzlicher Duplizierungsschritt mehr nötig.
+
 ## 0.17.0
 - **Live-Ansicht** oben in „Übersicht“ und „Duplizierung“ (alle 2 Sekunden aktualisiert, zuklappbar):
   laufende Vorgänge mit Fortschritt und aktueller Datei (Duplizieren inkl. Geschwindigkeit, SSD-Cache →

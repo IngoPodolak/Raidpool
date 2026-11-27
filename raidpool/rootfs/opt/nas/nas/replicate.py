@@ -165,6 +165,7 @@ class Replicator:
         self.watch = {"active": False, "dirs": 0, "error": None, "files": False}
         self.dirty_pools = set()
         self.ino = None
+        self.copy_active = lambda: False
         self.audit = None
         self.fan = None
         self.fan_branches = []
@@ -770,6 +771,16 @@ class Replicator:
             except OSError:
                 pass
 
+    def _yield_to_copies(self):
+        """Hintergrund-Aufträge warten, solange über die Freigaben viel geschrieben wird – dann werden
+        nur die aktuellen Dateien bearbeitet."""
+        if not self.copy_active():
+            return
+        self.job["paused"] = "wartet – großer Kopiervorgang läuft"
+        while self.copy_active() and not self.cancel.is_set() and not self.stop.is_set():
+            time.sleep(5)
+        self.job.pop("paused", None)
+
     def _job_reconcile(self, pool_id=None):
         pools = [self.settings.pool(pool_id)] if pool_id else list(self.settings.data["pools"])
         for pool in filter(None, pools):
@@ -779,6 +790,7 @@ class Replicator:
             for rel in todo:
                 if self.cancel.is_set():
                     raise InterruptedError
+                self._yield_to_copies()
                 try:
                     self.fix_file(pool, rel)
                 except OSError as err:
@@ -796,6 +808,7 @@ class Replicator:
             self._rescan(pool)
             self.job["phase"] = f"{pool['name']}: ausbalancieren"
             while moved < limit and not self.cancel.is_set():
+                self._yield_to_copies()
                 ms = self.members(pool)
                 if len(ms) < 2:
                     break

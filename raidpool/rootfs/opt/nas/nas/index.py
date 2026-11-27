@@ -62,6 +62,20 @@ STAGE = "~scan"   # Zwischen-ID während eines Scans
 
 class Index:
     stale = []   # gemeinsame Liste gefundener Temp-Reste (wird von der Replikation aufgeräumt)
+    copy_active = staticmethod(lambda: False)   # wird gesetzt: läuft gerade ein großer Kopiervorgang?
+    paused = False
+
+    @classmethod
+    def yield_to_copies(cls):
+        """Scans pausieren, solange über die Freigaben viel geschrieben wird."""
+        if not cls.copy_active():
+            return
+        cls.paused = True
+        try:
+            while cls.copy_active():
+                time.sleep(5)
+        finally:
+            cls.paused = False
 
     def __init__(self):
         self.lock = threading.Lock()
@@ -198,6 +212,8 @@ class Index:
                 stack = [""]
                 while stack:
                     rd = stack.pop()
+                    if prog["dirs"] % 200 == 0:
+                        Index.yield_to_copies()
                     visited.add(rd)
                     prog["dirs"] += 1
                     full = os.path.join(root, rd) if rd else root
@@ -287,7 +303,11 @@ class Index:
     def _walk(root, dirs=None, start=""):
         """Alle Dateien unter root. dirs: Liste, in die (ordner, mtime_ns) jedes besuchten Ordners kommt."""
         stack = [start]
+        n = 0
         while stack:
+            n += 1
+            if n % 50 == 0:
+                Index.yield_to_copies()
             rel_dir = stack.pop()
             full = os.path.join(root, rel_dir) if rel_dir else root
             if dirs is not None:

@@ -18,6 +18,7 @@ class LiveMonitor:
         self.data = {"cpu": 0.0, "mem": 0.0, "self_cpu": 0.0, "disks": {}}
         self.speed = {}          # Kopiergeschwindigkeit je Auftrag
         self._last_copy = None
+        self._copy_seen = 0.0     # zuletzt ein großer Kopiervorgang über die Freigaben erkannt
 
     # ------------------------------------------------------------ Messen
     @staticmethod
@@ -76,10 +77,22 @@ class LiveMonitor:
                         self.data = {"cpu": round(cpu, 1), "mem": round(mem, 1),
                                      "self_cpu": round(self_cpu, 1), "disks": disks}
                     self._copy_speed(dt)
+                    self._detect_copy(disks)
                 self._prev = cur
             except Exception:  # noqa: BLE001
                 pass
             time.sleep(2)
+
+    def _detect_copy(self, disks):
+        """Großer Kopiervorgang = über die Freigaben ist eine Datei zum Schreiben geöffnet und es wird
+        mit mehr als 20 MB/s geschrieben. Hält 30 s nach, damit kurze Pausen nichts anwerfen."""
+        writing = any(f["write"] for f in self._smb_open())
+        rate = sum(v["write"] for v in disks.values())
+        if writing and rate > 20e6:
+            self._copy_seen = time.time()
+
+    def copy_active(self):
+        return time.time() - self._copy_seen < 30
 
     def _copy_speed(self, dt):
         c = self.app.rep.current
@@ -140,7 +153,8 @@ class LiveMonitor:
         for pool in list(app.settings.data["pools"]):
             st = app.cache.state.get(pool["id"]) or {}
             if st.get("running"):
-                cache.append({"pool": pool["name"], "current": st.get("current"), "done": st.get("done", 0),
+                cache.append({"pool": pool["name"], "current": st.get("current"), "active": list(st.get("active") or []),
+                              "done": st.get("done", 0),
                               "total": st.get("total", 0), "bytes": st.get("moved_bytes", 0)})
         scans = []
         for pid, pr in list(app.index.progress.items()):
@@ -156,12 +170,14 @@ class LiveMonitor:
         audit = getattr(app, "audit", None)
         return {
             "t": int(time.time()),
+            "copy_active": self.copy_active(),
             "system": sysd,
             "disks": disks,
             "rep": {"current": rep.current, "speed": self.speed.get("rep", 0.0), "queue": len(rep.queue),
                     "job": job, "stats": rep.stats, "activity": list(rep.activity)[:6]},
             "cache": cache,
             "scans": scans,
+            "scan_paused": app.index.paused if hasattr(app.index, "paused") else False,
             "dupes": dupes,
             "check": {k: health.get(k) for k in ("label", "tool", "phase")} if health else None,
             "smb_open": self._smb_open()[:12],

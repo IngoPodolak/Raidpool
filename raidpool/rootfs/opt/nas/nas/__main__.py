@@ -27,7 +27,7 @@ from .smb import SambaManager
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 INGRESS_IP = "172.30.32.2"
-VERSION = "0.17.0"
+VERSION = "0.18.0"
 
 log = logging.getLogger("nas")
 
@@ -60,6 +60,12 @@ class App:
         self.cache.on_moved = lambda pid, rel: self.rep.enqueue(pid, rel)
         from .live import LiveMonitor
         self.live = LiveMonitor(self)
+        # Während großer Kopiervorgänge über die Freigaben pausieren Scans, Abgleich und Duplikatsuche
+        from .index import Index as _Ix
+        _Ix.copy_active = staticmethod(self.live.copy_active)
+        self.rep.copy_active = self.live.copy_active
+        self.dupes.copy_active = self.live.copy_active
+        self.cache.rep = self.rep
         self.version = VERSION
         self.health.raid = self.raid
         self.mqtt = MqttBridge(self)

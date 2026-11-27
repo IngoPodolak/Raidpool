@@ -20,12 +20,14 @@ function liveHtml(d) {
       <span class="muted">${fmtBytes(c.done)} / ${fmtBytes(c.size)} · ${mbps(r.speed)}</span></div>
       <div class="progress"><div style="width:${pct}%"></div></div></div>`);
   }
-  if (r.job) act.push(`<div class="lv-act small">🔁 <b>${esc(r.job.label)}</b> · ${esc(r.job.phase || "")}${r.job.total ? ` · ${fmtNum(r.job.done)} / ${fmtNum(r.job.total)}` : ""}</div>`);
-  (d.cache || []).forEach((c) => act.push(`<div class="lv-act"><div class="row spread small"><span>⚡ <b>SSD-Cache → Platten</b> (${esc(c.pool)}) ${esc(shortPath(c.current))}</span>
+  if (d.copy_active) act.unshift(`<div class="lv-act small"><span class="badge info">Kopiervorgang erkannt</span> Scans, Abgleich und Duplikatsuche warten, bis er fertig ist – nur neue Dateien werden bearbeitet.</div>`);
+  if (r.job) act.push(`<div class="lv-act small">🔁 <b>${esc(r.job.label)}</b> · ${esc(r.job.phase || "")}${r.job.total ? ` · ${fmtNum(r.job.done)} / ${fmtNum(r.job.total)}` : ""}${r.job.paused ? ` <span class="badge warn">${esc(r.job.paused)}</span>` : ""}</div>`);
+  (d.cache || []).forEach((c) => act.push(`<div class="lv-act"><div class="row spread small"><span>⚡ <b>SSD-Cache → Platten</b> (${esc(c.pool)})${(c.active || []).length > 1 ? ` · ${c.active.length} Dateien gleichzeitig` : ""}</span>
       <span class="muted">${fmtNum(c.done)} / ${fmtNum(c.total)} · ${fmtBytes(c.bytes)}</span></div>
-      <div class="progress"><div style="width:${c.total ? (100 * c.done) / c.total : 0}%"></div></div></div>`));
+      <div class="progress"><div style="width:${c.total ? (100 * c.done) / c.total : 0}%"></div></div>
+      ${((c.active && c.active.length) ? c.active : [c.current]).filter(Boolean).map((f) => `<div class="small muted">↳ ${esc(shortPath(f))}</div>`).join("")}</div>`));
   (d.scans || []).forEach((x) => act.push(`<div class="lv-act small">🔎 <b>${x.quick ? "Schneller Scan" : "Dateiliste einlesen"}</b> (${esc(x.pool)}) ·
-      ${x.quick ? `${fmtNum(x.dirs)} Ordner geprüft · ` : ""}${fmtNum(x.files)} Dateien · Platte ${x.disks_done + (x.disks_done < x.disks_total ? 1 : 0)}/${x.disks_total}</div>`));
+      ${x.quick ? `${fmtNum(x.dirs)} Ordner geprüft · ` : ""}${fmtNum(x.files)} Dateien · Platte ${x.disks_done + (x.disks_done < x.disks_total ? 1 : 0)}/${x.disks_total}${d.scan_paused ? ' <span class="badge warn">pausiert</span>' : ""}</div>`));
   if (d.dupes) {
     const p = d.dupes; act.push(`<div class="lv-act"><div class="row spread small"><span>🧬 <b>Duplikatsuche</b> · ${esc(p.phase)}${p.paused ? ' <span class="badge warn">pausiert</span>' : ""}</span>
       <span class="muted">${fmtNum(p.done)} / ${fmtNum(p.total)} · ${fmtBytes(p.read_bytes)} gelesen</span></div>

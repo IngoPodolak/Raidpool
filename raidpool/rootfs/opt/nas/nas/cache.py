@@ -181,6 +181,146 @@ class CacheManager:
                 pass
         return res
 
+    # ------------------------------------------------------------ Paralleles Verschieben
+    def _move_parallel(self, pool, todo, members, st):
+        """Mehrere Dateien gleichzeitig auf verschiedene Platten schreiben. Jede Datei wird direkt in
+        der Soll-Anzahl Kopien auf die Platten geschrieben (einmal von der SSD lesen, auf 1–3 Platten
+        gleichzeitig schreiben). Eine Platte bearbeitet immer nur eine Datei – so arbeiten alle
+        Platten parallel, statt dass sich mehrere Kopien auf einer Platte gegenseitig ausbremsen."""
+        rep = self.rep
+        min_free = rep.cfg().get("min_free_gb", 20) * 1e9
+        busy = set()
+        cond = threading.Condition()
+        jobs = list(todo)
+        workers = max(1, min(len(members), 4))
+
+        def pick(rel, size):
+            """Zielplatten wählen (unter cond). None = gerade keine frei, [] = unmöglich."""
+            t = max(1, min(rep._target(pool, rel), len(members)))
+            have = [m for m in members if os.path.exists(os.path.join(m["branch"], rel))]
+            rest = sorted((m for m in members if m not in have), key=lambda m: -m["free"])
+            chosen = list(have[:t])
+            for m in rest:
+                if len(chosen) >= t:
+                    break
+                if m["free"] - size > min_free:
+                    chosen.append(m)
+            if not chosen:
+                return []
+            if any(m["uuid"] in busy for m in chosen):
+                # andere freie Platten mit genug Platz bevorzugen
+                alt = list(have[:t]) + [m for m in rest if m["uuid"] not in busy and m["free"] - size > min_free]
+                alt = alt[:len(chosen)]
+                if len(alt) == len(chosen) and not any(m["uuid"] in busy for m in alt):
+                    return alt
+                return None
+            return chosen
+
+        def worker():
+            while not self.stop.is_set() and not self.paused_reason:
+                with cond:
+                    item, targets = None, None
+                    while jobs and item is None:
+                        for i, (rel, size) in enumerate(jobs):
+                            tg = pick(rel, size)
+                            if tg == []:
+                                jobs.pop(i)
+                                log.info("Cache: kein Platz für %s", rel)
+                                break
+                            if tg:
+                                item, targets = jobs.pop(i), tg
+                                break
+                        else:
+                            if not cond.wait(5):
+                                continue
+                    if item is None:
+                        return
+                    for m in targets:
+                        busy.add(m["uuid"])
+                    st["active"].append(item[0])
+                    st["current"] = item[0]
+                try:
+                    self._move_multi(pool, item[0], targets)
+                    with cond:
+                        st["done"] += 1
+                        st["moved_bytes"] += item[1]
+                        for m in targets:
+                            m["free"] -= item[1]
+                except InterruptedError:
+                    return
+                except OSError as err:
+                    log.info("Cache: %s nicht verschoben: %s", item[0], err)
+                finally:
+                    with cond:
+                        for m in targets:
+                            busy.discard(m["uuid"])
+                        if item[0] in st["active"]:
+                            st["active"].remove(item[0])
+                        cond.notify_all()
+
+        threads = [threading.Thread(target=worker, daemon=True, name=f"mover-{i}") for i in range(workers)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    def _move_multi(self, pool, rel, targets):
+        src = os.path.join(cache_dir(pool), rel)
+        st = os.stat(src)
+        tmps = []
+        try:
+            outs = []
+            for m in targets:
+                dst = os.path.join(m["branch"], rel)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                tmp = os.path.join(os.path.dirname(dst), f"{TMP}{uuidlib.uuid4().hex[:8]}-{os.path.basename(dst)}"[:250])
+                tmps.append((tmp, dst))
+                outs.append(open(tmp, "wb"))  # noqa: SIM115
+            try:
+                with open(src, "rb") as fi:
+                    while True:
+                        if self.stop.is_set():
+                            raise InterruptedError
+                        buf = fi.read(4 << 20)
+                        if not buf:
+                            break
+                        for fo in outs:
+                            fo.write(buf)
+                for fo in outs:
+                    fo.flush()
+                    os.fsync(fo.fileno())
+            finally:
+                for fo in outs:
+                    fo.close()
+            for tmp, _ in tmps:
+                if os.path.getsize(tmp) != st.st_size:
+                    raise OSError("Größe stimmt nicht")
+                os.utime(tmp, ns=(st.st_atime_ns, st.st_mtime_ns))
+            st2 = os.stat(src)
+            if (st2.st_size, st2.st_mtime_ns) != (st.st_size, st.st_mtime_ns):
+                raise OSError("Datei wurde während des Verschiebens geändert")
+            for tmp, dst in tmps:
+                os.replace(tmp, dst)
+                try:
+                    self.rep._ignore_path(dst, 60)
+                except Exception:  # noqa: BLE001
+                    pass
+            tmps = []
+        except BaseException:
+            for tmp, _ in tmps:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+            raise
+        os.remove(src)
+        if self.on_moved:
+            try:
+                self.on_moved(pool["id"], rel)
+            except Exception:  # noqa: BLE001
+                pass
+        return st.st_size
+
     def _move_one(self, pool, rel, base):
         src = os.path.join(cache_dir(pool), rel)
         dst = os.path.join(base, rel)
@@ -263,21 +403,26 @@ class CacheManager:
         if not todo:
             return
         open_files = self._open_files()
-        st.update(running=True, started=int(time.time()), total=len(todo), done=0, moved_bytes=0)
-        for rel, size in todo:
-            if self.stop.is_set() or self.paused_reason:
-                break
-            if os.path.join(root, rel) in open_files:
-                continue
-            try:
-                st["current"] = rel
-                self._move_one(pool, rel, base)
-                st["done"] += 1
-                st["moved_bytes"] += size
-            except InterruptedError:
-                break
-            except OSError as err:
-                log.info("Cache: %s nicht verschoben: %s", rel, err)
+        todo = [(rel, size) for rel, size in todo if os.path.join(root, rel) not in open_files]
+        st.update(running=True, started=int(time.time()), total=len(todo), done=0, moved_bytes=0,
+                  current=None, active=[])
+        rep = getattr(self, "rep", None)
+        members = [m for m in rep.members(pool) if m["writable"]] if rep else []
+        if len(members) >= 1:
+            self._move_parallel(pool, todo, members, st)
+        else:
+            for rel, size in todo:
+                if self.stop.is_set() or self.paused_reason:
+                    break
+                try:
+                    st["current"] = rel
+                    self._move_one(pool, rel, base)
+                    st["done"] += 1
+                    st["moved_bytes"] += size
+                except InterruptedError:
+                    break
+                except OSError as err:
+                    log.info("Cache: %s nicht verschoben: %s", rel, err)
         # leere Ordner im Cache aufräumen
         for r, dirs, names in os.walk(root, topdown=False):
             if r != root and not os.listdir(r):

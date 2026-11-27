@@ -162,6 +162,7 @@ class DupeFinder:
         except Exception:  # noqa: BLE001
             pass
         self.scope = None
+        self.copy_active = lambda: False
         self.lock = threading.Lock()
         self.idle = IdleMonitor()
         self.thread = None
@@ -285,6 +286,9 @@ class DupeFinder:
                         raise InterruptedError
                     if pausable:
                         self._wait_idle(cfg)
+                    while self.copy_active() and not self.cancel.is_set():
+                        self.progress["paused"] = True      # großer Kopiervorgang: warten
+                        time.sleep(5)
                     t0 = time.monotonic()
                     data = fh.read(min(CHUNK, left))
                     if not data:
