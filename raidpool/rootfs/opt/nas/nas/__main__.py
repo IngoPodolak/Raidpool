@@ -27,7 +27,7 @@ from .smb import SambaManager
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 INGRESS_IP = "172.30.32.2"
-VERSION = "0.16.0"
+VERSION = "0.17.0"
 
 log = logging.getLogger("nas")
 
@@ -58,6 +58,8 @@ class App:
         self.audit = AuditListener(self.rep.external_event)
         self.rep.audit = self.audit
         self.cache.on_moved = lambda pid, rel: self.rep.enqueue(pid, rel)
+        from .live import LiveMonitor
+        self.live = LiveMonitor(self)
         self.version = VERSION
         self.health.raid = self.raid
         self.mqtt = MqttBridge(self)
@@ -112,6 +114,7 @@ class App:
                          (self.cache.loop, "cache-mover")):
             threading.Thread(target=fn, daemon=True, name=name).start()
         threading.Thread(target=self.power.keepalive_loop, daemon=True, name="keepalive").start()
+        self.live.start()
         threading.Thread(target=self.dupes.scheduler_loop, daemon=True, name="dupe-scheduler").start()
         threading.Thread(target=self._smart_loop, daemon=True, name="smart").start()
         if self.options["publish_sensors"]:
@@ -183,6 +186,8 @@ class App:
             return self.disk_states()
         if path == "pools":
             return self.pool_states()
+        if path == "live":
+            return self.live.snapshot()
         if path == "folders":
             pid, fpath = g("pool"), g("path", "")
             pool = self.settings.pool(pid)

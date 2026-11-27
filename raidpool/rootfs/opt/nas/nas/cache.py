@@ -270,6 +270,7 @@ class CacheManager:
             if os.path.join(root, rel) in open_files:
                 continue
             try:
+                st["current"] = rel
                 self._move_one(pool, rel, base)
                 st["done"] += 1
                 st["moved_bytes"] += size
@@ -284,7 +285,7 @@ class CacheManager:
                     os.rmdir(r)
                 except OSError:
                     pass
-        st.update(running=False, last=int(time.time()))
+        st.update(running=False, last=int(time.time()), current=None)
         if st["done"]:
             self.activity.appendleft({"t": int(time.time()), "pool": pid, "files": st["done"], "bytes": st["moved_bytes"]})
             log.info("Cache %s: %d Dateien (%d MB) auf die Platten verschoben", pid, st["done"], st["moved_bytes"] // 1_000_000)

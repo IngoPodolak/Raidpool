@@ -563,6 +563,11 @@ class Replicator:
                     return (pool["id"], rel, uuid) if rel and not _ignored(rel) else None
         return None
 
+    def _recent(self, what, rel, size):
+        a = getattr(self, "audit", None)
+        if a is not None:
+            a.recent.appendleft({"t": int(time.time()), "what": what, "path": rel, "size": size})
+
     def _in_cache(self, pid, rel):
         cache = getattr(self.pools, "cache", None)
         pool = self.settings.pool(pid)
@@ -587,15 +592,20 @@ class Replicator:
             if not stat.S_ISREG(st.st_mode) or time.time() - st.st_ctime > 600:
                 return
             if loc[2] is None and self._in_cache(loc[0], loc[1]):
+                self._recent("auf SSD-Cache", loc[1], st.st_size)
                 return     # liegt noch auf dem SSD-Cache – der Mover meldet die Datei nach dem Verschieben
             if not self._is_self_op(path):
                 self.enqueue(loc[0], loc[1], loc[2])
+                self._recent("geschrieben", loc[1], st.st_size)
         elif op == "delete":
             if loc:
+                self._recent("gelöscht", loc[1], None)
                 self.index.delete_prefix(loc[0], loc[1])
                 self.enqueue(loc[0], loc[1], None)
         elif op == "rename":
             nloc = self._locate(new) if new else None
+            if nloc:
+                self._recent("umbenannt", nloc[1], None)
             if loc:
                 self.index.delete_prefix(loc[0], loc[1])
                 self.enqueue(loc[0], loc[1], None)

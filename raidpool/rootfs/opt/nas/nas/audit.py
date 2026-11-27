@@ -1,8 +1,10 @@
 """Echtzeit-Erkennung über Samba: das VFS-Modul full_audit meldet jede geschlossene, umbenannte oder
 gelöschte Datei in der Samba-Ausgabe (smb.py reicht diese Zeilen an feed() weiter). Das funktioniert
 unabhängig von der Ordnerzahl und vom inotify-Kontingent."""
+import collections
 import logging
 import os
+import time
 import queue
 import threading
 
@@ -16,6 +18,7 @@ class AuditListener:
         self.active = False
         self.error = None
         self.events = 0
+        self.recent = collections.deque(maxlen=30)   # zuletzt geänderte Dateien (für die Live-Ansicht)
 
     def start(self):
         # Verarbeitung in eigenem Thread: die Samba-Ausgabe darf nie warten müssen, sonst stockt Samba

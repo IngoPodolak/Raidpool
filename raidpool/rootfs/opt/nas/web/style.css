@@ -167,3 +167,16 @@ input.pw { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px soli
 .dlegend > div { display: grid; grid-template-columns: 12px 1fr auto 52px; gap: 8px; align-items: center; }
 .dlegend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); }
 .dlegend span.muted { text-align: right; }
+
+/* Live-Ansicht */
+.lv summary { cursor: pointer; }
+.lv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 760px) { .lv-grid { grid-template-columns: 1fr; } }
+.lv-act { margin: 6px 0 10px; }
+.lv-meters { display: grid; gap: 8px; }
+.lv-meter, .lv-disk { margin-bottom: 8px; }
+.lv-bar { height: 6px; border-radius: 4px; background: var(--bg); overflow: hidden; margin: 4px 0 2px; }
+.lv-bar > div { height: 100%; background: var(--ok); transition: width .6s; }
+.lv-bar.warn > div { background: var(--warn); }
+.lv-bar.bad > div { background: var(--bad); }
+.lv-file { padding: 3px 0; border-bottom: 1px solid var(--line); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

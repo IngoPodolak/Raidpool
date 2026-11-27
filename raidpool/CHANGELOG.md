@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.17.0
+- **Live-Ansicht** oben in „Übersicht“ und „Duplizierung“ (alle 2 Sekunden aktualisiert, zuklappbar):
+  laufende Vorgänge mit Fortschritt und aktueller Datei (Duplizieren inkl. Geschwindigkeit, SSD-Cache →
+  Platten, Scans, Abgleich, Duplikatsuche, Dateisystem-Prüfung, Warteschlange), Auslastung von CPU,
+  Arbeitsspeicher und RAIDPool selbst, Lese-/Schreibrate und Auslastung jeder Platte, über die Freigaben
+  gerade geöffnete Dateien (liest/schreibt) und zuletzt geänderte Dateien.
+
 ## 0.16.0
 - **Duplikatsuche viel schneller und schonender:** Statt Kandidaten komplett zu lesen, vergleicht sie
   standardmäßig Größe und Inhalt an 10 Stellen (ca. 0,8 MB je Datei; Dateien bis 1 MB ganz). Bei großen

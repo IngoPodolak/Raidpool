@@ -379,6 +379,7 @@ function switchTab(tab) {
   if (tab !== "dupes") $("#selbar").hidden = true;
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   document.querySelectorAll("main > section").forEach((s) => (s.hidden = s.id !== "tab-" + tab));
+  if (window.liveTick) window.liveTick();
   refresh();
 }
 document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => switchTab(b.dataset.tab)));
