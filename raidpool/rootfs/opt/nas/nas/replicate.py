@@ -85,6 +85,61 @@ class Inotify:
             pass
 
 
+# ---------------------------------------------------------------- fanotify (ganze Platte mit einer Markierung)
+FAN_CLOSE_WRITE, FAN_CLASS_NOTIF, FAN_CLOEXEC, FAN_NONBLOCK = 0x08, 0x0, 0x1, 0x2
+FAN_MARK_ADD, FAN_MARK_MOUNT, FAN_Q_OVERFLOW = 0x1, 0x10, 0x4000
+AT_FDCWD = -100
+_META = struct.Struct("IBBHQii")
+
+
+class Fanotify:
+    """Meldet jede fertig geschriebene Datei einer ganzen Platte – unabhängig von der Ordnerzahl
+    und ohne das inotify-Kontingent zu belasten (braucht CAP_SYS_ADMIN)."""
+
+    def __init__(self):
+        self.libc = ctypes.CDLL(None, use_errno=True)
+        self.libc.fanotify_mark.argtypes = [ctypes.c_int, ctypes.c_uint, ctypes.c_uint64, ctypes.c_int,
+                                            ctypes.c_char_p]
+        self.fd = self.libc.fanotify_init(FAN_CLASS_NOTIF | FAN_CLOEXEC | FAN_NONBLOCK, os.O_RDONLY | os.O_LARGEFILE)
+        if self.fd < 0:
+            raise OSError(ctypes.get_errno(), "fanotify_init")
+        self.marked = set()
+
+    def mark_mount(self, path):
+        if self.libc.fanotify_mark(self.fd, FAN_MARK_ADD | FAN_MARK_MOUNT, FAN_CLOSE_WRITE, AT_FDCWD,
+                                   os.fsencode(path)) < 0:
+            raise OSError(ctypes.get_errno(), f"fanotify_mark {path}")
+        self.marked.add(path)
+
+    def read(self):
+        """Liefert (pfad, überlauf) je Ereignis."""
+        try:
+            buf = os.read(self.fd, 64 * 1024)
+        except BlockingIOError:
+            return
+        i = 0
+        while i + _META.size <= len(buf):
+            ev_len, _v, _r, _ml, mask, fd, _pid = _META.unpack_from(buf, i)
+            if ev_len < _META.size:
+                break
+            i += ev_len
+            path = None
+            if fd >= 0:
+                try:
+                    path = os.readlink(f"/proc/self/fd/{fd}")
+                except OSError:
+                    pass
+                finally:
+                    os.close(fd)
+            yield path, bool(mask & FAN_Q_OVERFLOW)
+
+    def close(self):
+        try:
+            os.close(self.fd)
+        except OSError:
+            pass
+
+
 def _ignored(rel):
     parts = rel.split("/")
     return any(p in IGNORE_PARTS or p.startswith(TMP_PREFIX) for p in parts) or (parts and parts[0] in SKIP_NAMES)
@@ -106,9 +161,11 @@ class Replicator:
         self.job = None                 # laufender Auftrag (Abgleich, Ausbalancieren, Entfernen)
         self.current = None             # aktuell kopierte Datei
         self.stats = {"copied_files": 0, "copied_bytes": 0, "removed": 0, "conflicts": 0, "errors": 0}
-        self.watch = {"active": False, "dirs": 0, "error": None}
+        self.watch = {"active": False, "dirs": 0, "error": None, "files": False}
         self.dirty_pools = set()
         self.ino = None
+        self.fan = None
+        self.fan_branches = []
         self.watch_budget = 0
         self.paused_reason = None       # z. B. „USV im Batteriebetrieb“
 
@@ -410,9 +467,12 @@ class Replicator:
             if rd and _ignored(rd):
                 continue
             if self.watch["dirs"] >= self.watch_budget:
-                # Nie das gesamte inotify-Kontingent belegen: Home Assistant/systemd brauchen es auch
-                self.watch["error"] = (f"Echtzeit-Überwachung auf {self.watch_budget} Ordner begrenzt – weitere "
-                                       "Änderungen werden beim regelmäßigen Abgleich erkannt")
+                # Nie das gesamte inotify-Kontingent belegen: Home Assistant/systemd brauchen es auch.
+                # Neue/geänderte Dateien meldet fanotify trotzdem; nur Löschen/Verschieben in nicht
+                # überwachten Ordnern wird erst beim regelmäßigen Abgleich erkannt.
+                if not self.fan:
+                    self.watch["error"] = (f"Echtzeit-Überwachung auf {self.watch_budget} Ordner begrenzt – weitere "
+                                           "Änderungen werden beim regelmäßigen Abgleich erkannt")
                 return
             try:
                 self.ino.add(full, (pid, uuid, branch, rd))
@@ -443,20 +503,26 @@ class Replicator:
             try:
                 self.watch_budget = self._watch_budget()
                 self.ino = Inotify()
-                self.watch.update(active=True, dirs=0, error=None)
+                self.watch.update(active=True, dirs=0, error=None, files=False)
+                self._setup_fanotify()
                 for pool in list(self.settings.data["pools"]):
                     for uuid, branch, ok in self.pools.branches(pool):
                         if ok:
                             self._add_tree(pool["id"], uuid, branch, "")
-                if self.watch["dirs"]:
-                    self.log_act("info", f"Echtzeit-Überwachung aktiv ({self.watch['dirs']} Ordner)")
+                self.log_act("info", f"Echtzeit-Überwachung aktiv ({self.watch['dirs']} Ordner"
+                                     + (", alle Dateiänderungen" if self.fan else "") + ")")
                 gen = self.settings_generation()
                 while not self.stop.is_set() and gen == self.settings_generation():
-                    r, _, _ = select.select([self.ino.fd], [], [], 5)
+                    fds = [self.ino.fd] + ([self.fan.fd] if self.fan else [])
+                    r, _, _ = select.select(fds, [], [], 5)
                     if not r:
                         continue
-                    for wd, mask, name in self.ino.read():
-                        self._event(wd, mask, name)
+                    if self.ino.fd in r:
+                        for wd, mask, name in self.ino.read():
+                            self._event(wd, mask, name)
+                    if self.fan and self.fan.fd in r:
+                        for path, overflow in self.fan.read():
+                            self._fan_event(path, overflow)
             except Exception as err:  # noqa: BLE001
                 self.watch.update(active=False, error=str(err))
                 log.exception("Echtzeit-Überwachung")
@@ -465,6 +531,51 @@ class Replicator:
                 if self.ino:
                     self.ino.close()
                     self.ino = None
+                if self.fan:
+                    self.fan.close()
+                    self.fan = None
+
+    def _setup_fanotify(self):
+        self.fan, self.fan_branches = None, []
+        try:
+            fan = Fanotify()
+        except OSError as err:
+            log.info("fanotify nicht verfügbar (%s) – nur inotify", err)
+            return
+        branches = []
+        for pool in list(self.settings.data["pools"]):
+            for uuid, branch, ok in self.pools.branches(pool):
+                if not ok or uuid.startswith("net-"):
+                    continue
+                try:
+                    fan.mark_mount(branch)
+                    branches.append((branch.rstrip("/") + "/", pool["id"], uuid))
+                except OSError as err:
+                    log.info("fanotify für %s nicht möglich: %s", branch, err)
+        if not branches:
+            fan.close()
+            return
+        # längste Präfixe zuerst, falls Zweige ineinander liegen
+        self.fan_branches = sorted(branches, key=lambda b: -len(b[0]))
+        self.fan = fan
+        self.watch["files"] = True
+
+    def _fan_event(self, path, overflow):
+        if overflow:
+            self.log_act("info", "Viele Änderungen auf einmal – vollständiger Abgleich wird geplant")
+            try:
+                self.start_job("abgleich")
+            except ValueError:
+                pass
+            return
+        if not path or path.endswith(" (deleted)"):
+            return
+        for prefix, pid, uuid in self.fan_branches:
+            if path.startswith(prefix):
+                rel = path[len(prefix):]
+                if rel and not _ignored(rel) and not self._is_self_op(path):
+                    self.enqueue(pid, rel, uuid)
+                return
 
     def settings_generation(self):
         """Ändert sich, wenn Pools/Mitglieder sich ändern -> Überwachung neu aufbauen."""
@@ -516,7 +627,7 @@ class Replicator:
                     cur = int(fh.read().strip())
         except (OSError, ValueError):
             pass
-        return max(0, min(cur // 3, cur - 65536, 400000))
+        return max(1000, min(cur // 3, 400000))
 
     # ------------------------------------------------------------ Aufträge (Abgleich, Balance, Entfernen)
     def start_job(self, kind, **kw):

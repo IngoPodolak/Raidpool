@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.3
+- **Echtzeit-Duplizierung für große Pools:** neue und geänderte Dateien werden jetzt per fanotify für die
+  ganze Platte erkannt – unabhängig von der Anzahl der Ordner. Vorher stand bei großen Pools
+  „auf 0 Ordner begrenzt“ und dupliziert wurde erst beim Abgleich.
+- Ordner-Überwachung (für Löschen/Verschieben) nutzt bis zu einem Drittel des Systemkontingents.
+
 ## 0.12.2
 - **Schreibschutz erkannt:** Hängt der NTFS-Treiber eine Platte stillschweigend nur lesend ein (Windows-
   Schnellstart/Ruhezustand oder unsauberes Dateisystem), zeigt RAIDPool das jetzt an („unsauber“ +

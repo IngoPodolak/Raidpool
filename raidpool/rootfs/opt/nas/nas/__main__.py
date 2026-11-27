@@ -27,7 +27,7 @@ from .smb import SambaManager
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 INGRESS_IP = "172.30.32.2"
-VERSION = "0.12.2"
+VERSION = "0.12.3"
 
 log = logging.getLogger("nas")
 

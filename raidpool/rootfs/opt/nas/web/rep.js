@@ -45,7 +45,7 @@ window.repCard = () => {
   return `<div class="card">
     <div class="row spread"><h2 style="margin:0">Duplizierungsdienst</h2>
       <div class="row">${r.read_only ? '<span class="badge warn">Schreibschutz aktiv – pausiert</span>' : c.enabled ? '<span class="badge ok">aktiv</span>' : '<span class="badge">aus</span>'}
-      ${c.realtime && !r.read_only ? (r.watch.active ? `<span class="badge info">Echtzeit · ${fmtNum(r.watch.dirs)} Ordner überwacht</span>` : '<span class="badge warn">Echtzeit nicht aktiv</span>') : ""}</div></div>
+      ${c.realtime && !r.read_only ? (r.watch.active ? `<span class="badge info">Echtzeit · ${r.watch.files ? "alle Dateiänderungen" : fmtNum(r.watch.dirs) + " Ordner überwacht"}</span>` : '<span class="badge warn">Echtzeit nicht aktiv</span>') : ""}</div></div>
     ${r.watch.error ? `<div class="small muted" style="margin-top:6px">⚠️ ${esc(r.watch.error)}</div>` : ""}
     <div class="stats">
       <div class="stat"><b>${fmtNum(r.queue)}</b><span>Warteschlange</span></div>
