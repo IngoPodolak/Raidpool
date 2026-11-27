@@ -129,7 +129,7 @@ lassen sie sich nur lesend einbinden. Windows vorher vollständig herunterfahren
 
 1. ✅ Pool, DrivePool-Übernahme, SMART, Duplizierungs-Analyse, Weboberfläche
 2. ✅ Duplizierung herstellen, Echtzeit, Ausbalancieren, Platte entfernen (0.6.0)
-3. SMB-Freigaben und Benutzer (Namen aus HA, eigenes SMB-Passwort)
+3. ✅ SMB-Freigaben und Benutzer (0.5.0)
 4. SSD-Cache (fest je Pool, geteilt oder System-SSD; Mover auf die Platten)
 5. RAID-Modi (mdadm), eigene HA-Integration
 
