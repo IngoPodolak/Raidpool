@@ -43,6 +43,10 @@ class DiskManager:
         self.disks = []          # zuletzt erkannte Platten
         self.errors = {}         # uuid -> letzte Fehlermeldung beim Einhängen
         self.net = None          # NetShares (Netzwerkfreigaben als „Platten“)
+        self.dirty = {}          # uuid -> Meldung, wenn NTFS als „unsauber“ erkannt wurde
+        self.forced_ro = set()   # uuids, die wegen Unsauberkeit nur lesend eingebunden sind
+        self.dirty_policy = "readonly"   # readonly | repair | mount (wird von außen gesetzt)
+        self.busy = set()        # uuids, die gerade geprüft werden (nicht automatisch einhängen)
 
     # ------------------------------------------------------------ Erkennung
     def _lsblk(self):
@@ -107,6 +111,9 @@ class DiskManager:
             "poolparts": [],
             "usage": None,
             "error": self.errors.get(uuid),
+            "dirty": self.dirty.get(uuid),
+            "forced_ro": uuid in self.forced_ro,
+            "checking": uuid in self.busy,
         }
         if mounted:
             if mp in mounts:
@@ -155,6 +162,8 @@ class DiskManager:
             os.makedirs(mp, exist_ok=True)
             return mp
         os.makedirs(mp, exist_ok=True)
+        if part["fstype"] == "ntfs" and not read_only:
+            read_only = self._dirty_gate(uuid, part)
         ro = "ro" if read_only else "rw"
         attempts = []
         if part["fstype"] == "ntfs":
@@ -186,6 +195,53 @@ class DiskManager:
             pass
         raise RuntimeError(last or "Einhängen fehlgeschlagen")
 
+    # ------------------------------------------------------------ Unsaubere NTFS-Platten
+    @staticmethod
+    def ntfsck_available():
+        code, _, _ = run(["ntfsck", "--help"], timeout=10)
+        return code != 127
+
+    def is_dirty(self, part):
+        """True, wenn das NTFS-Dateisystem als unsauber markiert ist (z. B. nach Stromausfall)."""
+        if self.ntfsck_available():
+            code, _, _ = run(["ntfsck", "-C", part["path"]], timeout=120)
+            return code == 1
+        # Fallback: ntfsfix -n meldet bei gesetztem Dirty-Flag entsprechende Hinweise
+        code, out, err = run(["ntfsfix", "-n", part["path"]], timeout=120)
+        txt = (out + err).lower()
+        return "dirty" in txt and "not dirty" not in txt
+
+    def _dirty_gate(self, uuid, part):
+        """Vor dem Einhängen mit Schreibzugriff prüfen. Gibt True zurück, wenn nur lesend eingehängt werden soll."""
+        try:
+            dirty = self.is_dirty(part)
+        except Exception as err:  # noqa: BLE001
+            log.warning("Dirty-Prüfung %s: %s", part["path"], err)
+            return False
+        if not dirty:
+            self.dirty.pop(uuid, None)
+            self.forced_ro.discard(uuid)
+            return False
+        policy = self.dirty_policy
+        if policy == "repair" and self.ntfsck_available():
+            log.warning("%s ist unsauber – automatische Prüfung/Reparatur mit ntfsck", part["path"])
+            code, out, err = run(["ntfsck", "-a", part["path"]], timeout=6 * 3600)
+            if code in (0, 1):
+                self.dirty.pop(uuid, None)
+                self.forced_ro.discard(uuid)
+                return False
+            self.dirty[uuid] = f"Automatische Reparatur fehlgeschlagen (Code {code}) – nur lesend eingebunden"
+        elif policy == "mount":
+            self.dirty[uuid] = "Dateisystem unsauber (z. B. nach Stromausfall) – trotzdem mit Schreibzugriff eingebunden"
+            return False
+        else:
+            self.dirty[uuid] = "Dateisystem unsauber (z. B. nach Stromausfall) – nur lesend eingebunden, bitte prüfen"
+        self.forced_ro.add(uuid)
+        return True
+
+    def is_writable(self, uuid):
+        return not self.options["read_only"] and uuid not in self.forced_ro and uuid not in self.busy
+
     def unmount(self, uuid):
         if uuid.startswith("net-") and self.net:
             return self.net.unmount(uuid[4:])
@@ -206,7 +262,7 @@ class DiskManager:
             if d["system"] or d.get("network"):
                 continue
             for p in d["partitions"]:
-                if p["fstype"] == "ntfs" and not p["mountpoint"] and p["size"] > 1 << 30:
+                if p["fstype"] == "ntfs" and not p["mountpoint"] and p["size"] > 1 << 30 and p["uuid"] not in self.busy:
                     try:
                         self.mount(p["uuid"])
                     except Exception as err:  # noqa: BLE001

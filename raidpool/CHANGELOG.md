@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.0
+- **Plattenausfall im Betrieb** wird erkannt: Platte wird aus dem Pool gelöst (ohne Aushängen des
+  Pools), Meldung in Home Assistant, fehlende Kopien werden sofort auf die übrigen Platten kopiert.
+  Kommt die Platte zurück (z. B. USB), wird sie automatisch wieder eingebunden.
+- **Platte hinzufügen** und **Platte ersetzen** für bestehende Pools – danach automatischer Abgleich.
+- **Dateisystem-Prüfung (wie chkdsk)**: Prüfen bzw. Prüfen und reparieren pro Partition – NTFS mit
+  `ntfsck` (Fallback `ntfsfix`), ext4, XFS, exFAT, btrfs (nur prüfen). Live-Protokoll, die Platte wird
+  dafür kurz aus dem Pool gelöst.
+- **SMART-Oberflächentest** (wie chkdsk /r) pro Platte.
+- **Unsaubere NTFS-Platten** (z. B. nach Stromausfall) werden erkannt: nur lesend einbinden und melden
+  (Standard), automatisch reparieren oder trotzdem einbinden.
+- **USV über NUT**: bei Batteriebetrieb Pause von Duplizierung/Duplikatsuche/Ausbalancieren, optional
+  Aushängen bei niedrigem Akku.
+- Reste abgebrochener Kopien (`.nas-tmp-*`) werden aufgeräumt und nie mitgezählt.
+- Basis jetzt Debian trixie (neuere Samba/mergerfs, ntfsck verfügbar).
+
 ## 0.6.0
 - **Duplizierung wird hergestellt**: fehlende Kopien werden auf die Platte mit dem meisten freien
   Platz kopiert (Temp-Datei → Größenprüfung → umbenennen), Änderungszeit bleibt erhalten.

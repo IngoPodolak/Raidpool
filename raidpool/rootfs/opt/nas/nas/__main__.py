@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlparse
 from . import config, sensors
 from .disks import DiskManager
 from .dupes import DupeFinder
+from .health import Health
 from .index import Index
 from .netshares import NetShares
 from .pools import PoolManager
@@ -23,7 +24,7 @@ from .smb import SambaManager
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 INGRESS_IP = "172.30.32.2"
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 
 log = logging.getLogger("nas")
 
@@ -46,6 +47,7 @@ class App:
         self.dupes = DupeFinder(self.options, self.settings, self.pools, self.index)
         self.smb = SambaManager(self.options, self.settings, self.pools)
         self.rep = Replicator(self.options, self.settings, self.pools, self.index)
+        self.health = Health(self.options, self.settings, self.disks, self.pools, self.rep, self.dupes)
         self.stop = threading.Event()
 
     def start(self):
@@ -63,7 +65,7 @@ class App:
             log.exception("Samba-Start fehlgeschlagen")
         threading.Thread(target=self.smb.watchdog_loop, daemon=True, name="smb-watchdog").start()
         for fn, name in ((self.rep.worker_loop, "rep-worker"), (self.rep.watch_loop, "rep-watch"),
-                         (self.rep.scheduler_loop, "rep-scheduler")):
+                         (self.rep.scheduler_loop, "rep-scheduler"), (self.health.monitor_loop, "health")):
             threading.Thread(target=fn, daemon=True, name=name).start()
         threading.Thread(target=self.power.keepalive_loop, daemon=True, name="keepalive").start()
         threading.Thread(target=self.dupes.scheduler_loop, daemon=True, name="dupe-scheduler").start()
@@ -158,6 +160,12 @@ class App:
             if mode == "under":
                 return self.index.under_files(pool, fpath, limit)
             return self.index.files(pid, fpath, mode, limit)
+        if path == "health/status":
+            return self.health.status()
+        if path == "health/ups_candidates":
+            return self.health.ups_candidates()
+        if path == "health/smart_test":
+            return self.health.smart_test_status(g("device"))
         if path == "rep/status":
             return self.rep.status()
         if path == "rep/copies":
@@ -201,6 +209,29 @@ class App:
             self.disks.unmount(body["uuid"])
             self.disks.refresh()
             return {"ok": True}
+        if path == "health/config":
+            return self.health.set_cfg(body)
+        if path == "health/check":
+            self.health.start_check(body["uuid"], bool(body.get("repair")))
+            return {"ok": True}
+        if path == "health/smart_test":
+            self.health.start_smart_test(body["device"], body.get("kind", "long"))
+            return {"ok": True}
+        if path in ("pools/add_member", "pools/replace_member"):
+            self.disks.refresh()
+            if path == "pools/add_member":
+                self.pools.add_member(body["pool"], body["uuid"], body.get("mode", "pp"))
+            else:
+                self.pools.replace_member(body["pool"], body["old"], body["uuid"], body.get("mode", "pp"))
+                self.health.failed.pop((body["pool"], body["old"]), None)
+            started = False
+            if self.rep.writable() and self.rep.cfg()["enabled"]:
+                try:
+                    self.rep.start_job("abgleich", pool_id=body["pool"])
+                    started = True
+                except ValueError:
+                    pass
+            return {"ok": True, "reconcile": started}
         if path == "rep/config":
             return self.rep.set_cfg(body)
         if path == "rep/start":
@@ -405,6 +436,7 @@ def main():
         app.dupes.cancel.set()
         app.smb.stop_evt.set()
         app.rep.stop.set()
+        app.health.stop.set()
         app.smb.stop()
         threading.Thread(target=server.shutdown, daemon=True).start()
 

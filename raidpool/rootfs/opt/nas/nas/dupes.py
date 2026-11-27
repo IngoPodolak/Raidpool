@@ -281,6 +281,8 @@ class DupeFinder:
 
     # ------------------------------------------------------------ Scan
     def start(self, trigger="manuell"):
+        if getattr(self, "paused_reason", None):
+            raise ValueError(f"Pausiert: {self.paused_reason}")
         if self.thread and self.thread.is_alive():
             raise ValueError("Duplikatsuche läuft bereits")
         self.cancel.clear()

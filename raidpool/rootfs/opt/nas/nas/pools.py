@@ -129,13 +129,93 @@ class PoolManager:
                 f"fsname=raidpool-{pool['id']}"]
         if ro:
             opts.append("ro")
-        branch_str = ":".join(b[1] + ("=RO" if ro else "=RW") for b in present)
+        branch_str = ":".join(b[1] + ("=RO" if ro or not self.disks.is_writable(b[0]) else "=RW") for b in present)
         code, _, err = run(["mergerfs", "-o", ",".join(opts), branch_str, mp], timeout=60)
         if code != 0:
             self.errors[pool["id"]] = err.strip() or "mergerfs-Fehler"
             raise RuntimeError(self.errors[pool["id"]])
         self.errors.pop(pool["id"], None)
         log.info("Pool %s eingehängt unter %s (%d/%d Platten)", pool["id"], mp, len(present), len(pool["members"]))
+
+    # ------------------------------------------------------------ Zweige zur Laufzeit ändern
+    def _ctl(self, pool, value):
+        """mergerfs-Zweige ändern, ohne den Pool auszuhängen (offene Dateien/SMB bleiben bestehen)."""
+        ctl = os.path.join(self.mountpoint(pool), ".mergerfs")
+        if config.DEV:
+            return True
+        try:
+            os.setxattr(ctl, "user.mergerfs.branches", value.encode())
+            return True
+        except OSError as err:
+            log.warning("mergerfs-Zweige ändern (%s) fehlgeschlagen: %s – Pool wird neu eingehängt", value, err)
+            return False
+
+    def branch_remove(self, pool, uuid):
+        b = next((b for u, b, _ in self.branches(pool) if u == uuid), None)
+        if b and self.is_mounted(pool) and not self._ctl(pool, "-" + b):
+            self.remount(pool)
+
+    def branch_add(self, pool, uuid):
+        b = next((b for u, b, ok in self.branches(pool) if u == uuid and ok), None)
+        if not b or not self.is_mounted(pool):
+            return
+        mode = "RW" if self.disks.is_writable(uuid) else "RO"
+        if not self._ctl(pool, f"+>{b}={mode}"):
+            self.remount(pool)
+
+    def remount(self, pool):
+        try:
+            self.unmount(pool)
+        except RuntimeError:
+            if not config.DEV:
+                run(["umount", "-l", self.mountpoint(pool)])
+        self.mount(pool)
+
+    # ------------------------------------------------------------ Mitglieder ändern
+    def add_member(self, pid, uuid, mode="pp"):
+        pool = self.settings.pool(pid)
+        if not pool:
+            raise ValueError("Pool nicht gefunden")
+        used = {m["uuid"] for p in self.settings.data["pools"] for m in p["members"]}
+        if uuid in used:
+            raise ValueError("Die Platte gehört bereits zu einem Pool")
+        _, part = self.disks.partition(uuid)
+        if not part:
+            raise ValueError("Platte nicht gefunden")
+        if not part["mountpoint"]:
+            self.disks.mount(uuid)
+        base = os.path.join(config.DISK_MNT, uuid)
+        if mode == "direct":
+            pp = "."
+        else:
+            existing = [x for x in (part.get("poolparts") or [])]
+            if existing:
+                pp = existing[0]
+            else:
+                if self.options["read_only"]:
+                    raise ValueError("Für einen neuen PoolPart-Ordner muss 'read_only' ausgeschaltet sein")
+                pp = f"PoolPart.{uuidlib.uuid4()}"
+                os.makedirs(os.path.join(base, pp), exist_ok=True)
+        with self.settings.lock:
+            pool["members"].append({"uuid": uuid, "poolpart": pp})
+            self.settings.save()
+        self.disks.refresh()
+        self.branch_add(pool, uuid)
+        return pool
+
+    def replace_member(self, pid, old_uuid, new_uuid, mode="pp"):
+        """Ausgefallene (oder alte) Platte durch eine neue ersetzen. Die alte wird nur aus dem Pool entfernt."""
+        pool = self.settings.pool(pid)
+        if not pool:
+            raise ValueError("Pool nicht gefunden")
+        if not any(m["uuid"] == old_uuid for m in pool["members"]):
+            raise ValueError("Alte Platte gehört nicht zum Pool")
+        self.add_member(pid, new_uuid, mode)
+        self.branch_remove(pool, old_uuid)
+        with self.settings.lock:
+            pool["members"] = [m for m in pool["members"] if m["uuid"] != old_uuid]
+            self.settings.save()
+        return pool
 
     def unmount(self, pool):
         if config.DEV or not self.is_mounted(pool):

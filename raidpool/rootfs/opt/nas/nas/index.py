@@ -54,6 +54,8 @@ def effective_target(path, targets, default):
 
 
 class Index:
+    stale = []   # gemeinsame Liste gefundener Temp-Reste (wird von der Replikation aufgeräumt)
+
     def __init__(self):
         self.lock = threading.Lock()
         self.db = connect()
@@ -121,6 +123,9 @@ class Index:
                         if (not rel_dir and e.name in SKIP_NAMES) or e.name == ".nas-recycle":
                             continue
                         rel = f"{rel_dir}/{e.name}" if rel_dir else e.name
+                        if e.name.startswith(".nas-tmp-"):
+                            Index.stale.append(os.path.join(full, e.name))
+                            continue
                         try:
                             if e.is_dir(follow_symlinks=False):
                                 stack.append(rel)

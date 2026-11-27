@@ -58,6 +58,7 @@ function usageBar(sp) {
 function renderBanner() {
   const s = state.status; const el = $("#banner"); let html = "";
   if (s.options.read_only) html += `<div class="banner warn"><b>Schreibschutz aktiv.</b> Alle Platten und Pools werden nur lesend eingebunden – nichts auf den Platten wird verändert. Zum Schreiben in den Add-on-Optionen <code>read_only</code> ausschalten.</div>`;
+  if (window.healthBanner) html += window.healthBanner();
   if (s.candidates.length) html += `<div class="banner row spread"><div><b>Bestehender DrivePool gefunden:</b> ${s.candidates.length} PoolPart-Ordner auf ${new Set(s.candidates.map((c) => c.uuid)).size} Platten.</div><button class="btn primary" onclick="openCreate(true)">Als Pool übernehmen</button></div>`;
   el.innerHTML = html;
 }
@@ -99,9 +100,11 @@ function renderOverview() {
           return `<div class="member"><div><b>${esc(m.model || m.disk || m.uuid)}</b> <span class="muted small">${esc(m.disk || "")} ${esc(m.label || "")}</span></div>
             <div>${m.available ? (m.smart_state ? smartBadge({ available: true, state: m.smart_state }) : "") : '<span class="badge bad">fehlt</span>'}</div>
             <div class="muted small">${u ? fmtBytes(u.free) + " frei von " + fmtBytes(u.total) : "–"}</div>
-            <div>${p.members.length > 1 ? `<button class="btn" style="padding:2px 8px;font-size:12px" onclick='removeMember(${js(p.id)}, ${js(m.uuid)}, ${js(m.model || m.label || m.uuid)})'>Aus Pool nehmen</button>` : ""}</div>
+            <div>${!m.available ? `<button class="btn primary" style="padding:2px 8px;font-size:12px" onclick='memberDialog(${js(p.id)}, ${js(m.uuid)}, ${js(m.model || m.label || m.uuid)})'>Ersetzen …</button>`
+              : p.members.length > 1 ? `<button class="btn" style="padding:2px 8px;font-size:12px" onclick='removeMember(${js(p.id)}, ${js(m.uuid)}, ${js(m.model || m.label || m.uuid)})'>Aus Pool nehmen</button>` : ""}</div>
             <div class="bar"><div style="width:${w}%;background:var(--seg-data)"></div></div></div>`;
         }).join("")}
+        <div style="margin-top:6px"><button class="btn" style="font-size:12px;padding:3px 10px" onclick='memberDialog(${js(p.id)})'>+ Platte hinzufügen</button></div>
         <div class="row" style="margin-top:12px">
           <button class="btn primary" onclick="openDup('${p.id}')">Duplizierung</button>
           <button class="btn" onclick="repJob('abgleich','${p.id}')" title="Soll-Duplizierung jetzt vollständig herstellen">Jetzt abgleichen</button>
@@ -257,7 +260,7 @@ function renderDisks() {
   const el = $("#tab-disks");
   const nets = state.disks.filter((d) => d.network);
   const locals = state.disks.filter((d) => !d.network);
-  el.innerHTML = `<div class="row spread"><h2>Netzwerkfreigaben</h2><button class="btn" onclick="openNetShare()">+ Netzwerkfreigabe</button></div>
+  el.innerHTML = (window.healthTop ? window.healthTop() : "") + `<div class="row spread"><h2>Netzwerkfreigaben</h2><button class="btn" onclick="openNetShare()">+ Netzwerkfreigabe</button></div>
     ${nets.length ? `<div class="grid">${nets.map(netCard).join("")}</div>` : '<div class="card muted small">Noch keine Netzwerkfreigabe eingebunden. Freigaben eines anderen NAS (SMB oder NFS) können wie eine Platte in einen Pool aufgenommen oder nach Duplikaten durchsucht werden.</div>'}
     <div class="row spread" style="margin-top:8px"><h2>Platten</h2><div class="row">
       <button class="btn" onclick="act(()=>api('smart/refresh',{}),'SMART aktualisiert')">SMART aktualisieren</button>
@@ -272,6 +275,7 @@ function renderDisks() {
           ${s.start_stop != null ? `<div class="stat"><b>${fmtNum(s.start_stop)}</b><span>Anläufe (Motor)</span></div>` : ""}
           ${s.load_cycles != null ? `<div class="stat"><b style="color:${s.load_cycles > 300000 ? "var(--bad)" : "inherit"}">${fmtNum(s.load_cycles)}</b><span>Kopf-Parkvorgänge</span></div>` : ""}</div>` : ""}
         ${d.system ? "" : powerSelect(d)}
+        ${d.system || !window.smartTestLine ? "" : window.smartTestLine(d)}
         ${s && !s.available ? `<div class="muted small">SMART nicht lesbar${s.reason ? ": " + esc(s.reason) : ""}. Unter Proxmox den SATA-Controller per PCIe durchreichen, nicht nur die einzelne Platte.</div>` : ""}
         ${s && s.warnings && s.warnings.length ? `<ul class="warnings">${s.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}
         ${s && s.attributes && s.attributes.length ? `<details><summary class="small muted">Alle SMART-Attribute</summary><div class="table-wrap"><table class="small"><tr><th>ID</th><th>Attribut</th><th class="num">Wert</th><th class="num">Schwelle</th><th class="num">Rohwert</th></tr>
@@ -282,7 +286,8 @@ function renderDisks() {
           <div>${d.system ? "" : p.mountpoint ? `<span class="badge ok">${p.mount_ro === false ? "rw" : "ro"}</span> <button class="btn" onclick="act(()=>api('disks/unmount',{uuid:'${p.uuid}'}),'Ausgehängt')">Aushängen</button>`
             : `<button class="btn" onclick="act(()=>api('disks/mount',{uuid:'${p.uuid}'}),'Eingehängt')">Einhängen</button>`}</div>
           <div class="muted small" style="grid-column:1/-1">${p.usage ? fmtBytes(p.usage.used) + " belegt, " + fmtBytes(p.usage.free) + " frei" : ""}
-            ${p.poolparts.map((x) => `<div class="mono">${esc(x)}</div>`).join("")}${p.error ? `<ul class="warnings"><li>${esc(p.error)}</li></ul>` : ""}</div></div>`).join("") || '<div class="muted small">Keine Partitionen</div>'}
+            ${p.poolparts.map((x) => `<div class="mono">${esc(x)}</div>`).join("")}${p.error ? `<ul class="warnings"><li>${esc(p.error)}</li></ul>` : ""}
+            ${!d.system && window.fsckLine ? window.fsckLine(d, p) : ""}</div></div>`).join("") || '<div class="muted small">Keine Partitionen</div>'}
       </div>`;
     }).join("") + "</div>";
 }
@@ -348,6 +353,7 @@ async function refresh() {
   try {
     state.status = await api("status");
     state.rep = await api("rep/status").catch(() => null);
+    state.health = await api("health/status").catch(() => null);
     if (!state.disks.length || state.tab === "disks") await loadDisks();
   } catch (e) { $("#banner").innerHTML = `<div class="banner warn">Keine Verbindung zum Add-on: ${esc(e.message)}</div>`; return; }
   renderBanner();
@@ -356,7 +362,7 @@ async function refresh() {
   else if (state.tab === "dup") await renderDup();
   else if (state.tab === "shares") await window.renderShares();
   else await window.renderDupes();
-  const scanning = state.status.pools.some((p) => p.scan && p.scan.status === "läuft") || (state.rep && ((state.rep.job && state.rep.job.running) || state.rep.current || state.rep.queue)) || (state.tab === "dupes" && window.dupesRunning && window.dupesRunning());
+  const scanning = (state.health && state.health.check && state.health.check.running) || state.status.pools.some((p) => p.scan && p.scan.status === "läuft") || (state.rep && ((state.rep.job && state.rep.job.running) || state.rep.current || state.rep.queue)) || (state.tab === "dupes" && window.dupesRunning && window.dupesRunning());
   clearTimeout(state.timer);
   state.timer = setTimeout(refresh, scanning ? 3000 : 30000);
 }

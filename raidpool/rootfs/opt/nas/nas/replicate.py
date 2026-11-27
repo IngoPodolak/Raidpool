@@ -109,6 +109,7 @@ class Replicator:
         self.watch = {"active": False, "dirs": 0, "error": None}
         self.dirty_pools = set()
         self.ino = None
+        self.paused_reason = None       # z. B. „USV im Batteriebetrieb“
 
     # ------------------------------------------------------------ Einstellungen
     def cfg(self):
@@ -144,7 +145,7 @@ class Replicator:
             except OSError:
                 continue
             res.append({"uuid": uuid, "branch": branch, "free": st.f_bavail * st.f_frsize,
-                        "total": st.f_blocks * st.f_frsize})
+                        "total": st.f_blocks * st.f_frsize, "writable": self.pools.disks.is_writable(uuid)})
         return res
 
     def _target(self, pool, rel):
@@ -266,6 +267,8 @@ class Replicator:
                     self.log_act("konflikt", f"Kopien unterschiedlich und gleich alt, bitte auswählen: {rel}", pid)
                     return "konflikt"
             for m, p, st in present:
+                if not m["writable"]:
+                    continue
                 if p != src[1] and (st.st_size != src[2].st_size or abs(st.st_mtime - src[2].st_mtime) > 2):
                     self.current = {"pool": pid, "path": rel, "size": src[2].st_size, "done": 0, "action": "aktualisieren"}
                     self._copy(src[1], p)
@@ -279,7 +282,7 @@ class Replicator:
         if len(present) < target:
             have = {m["uuid"] for m, _, _ in present}
             reserve = cfg["min_free_gb"] * 1e9
-            cands = sorted((m for m in members if m["uuid"] not in have and m["free"] - size > reserve),
+            cands = sorted((m for m in members if m["uuid"] not in have and m["writable"] and m["free"] - size > reserve),
                            key=lambda m: -m["free"])
             for m in cands[:target - len(present)]:
                 dst = os.path.join(m["branch"], rel)
@@ -299,6 +302,8 @@ class Replicator:
             if same:
                 keep_first = sorted(present, key=lambda x: (x[0]["uuid"] != master_entry[0]["uuid"], -x[0]["free"]))
                 for m, p, _ in keep_first[target:]:
+                    if not m["writable"]:
+                        continue
                     self._remove(p)
                     self.log_act("entfernt", f"Überzählige Kopie {rel} von {self._disk_label(m['uuid'])}", pid)
                 present = keep_first[:target]
@@ -355,7 +360,7 @@ class Replicator:
         lower_priority()
         last_agg = time.time()
         while not self.stop.wait(1):
-            if not self.cfg()["enabled"] or not self.writable():
+            if not self.cfg()["enabled"] or not self.writable() or self.paused_reason:
                 continue
             now = time.time()
             with self.lock:
@@ -503,6 +508,8 @@ class Replicator:
     def start_job(self, kind, **kw):
         if not self.writable():
             raise ValueError("Schreibschutz aktiv – zum Duplizieren 'read_only' in den Add-on-Optionen ausschalten")
+        if self.paused_reason:
+            raise ValueError(f"Pausiert: {self.paused_reason}")
         if self.job and self.job.get("running"):
             if kind == "abgleich" and self.job["kind"] == "abgleich":
                 return
@@ -540,6 +547,19 @@ class Replicator:
         self.job["phase"] = f"Dateiliste {pool['name']} aktualisieren"
         branches = [(u, b) for u, b, ok in self.pools.branches(pool) if ok]
         self.index.scan(pool, branches)
+        self.cleanup_tmp()
+
+    def cleanup_tmp(self):
+        """Reste abgebrochener Kopien (z. B. nach Neustart/Stromausfall) entfernen – nur ältere als 1 h."""
+        from .index import Index
+        stale, Index.stale[:] = list(Index.stale), []
+        for p in stale:
+            try:
+                if time.time() - os.path.getmtime(p) > 3600:
+                    os.remove(p)
+                    self.log_act("info", f"Rest einer abgebrochenen Kopie entfernt: {os.path.basename(p)}")
+            except OSError:
+                pass
 
     def _job_reconcile(self, pool_id=None):
         pools = [self.settings.pool(pool_id)] if pool_id else list(self.settings.data["pools"])
@@ -573,6 +593,9 @@ class Replicator:
                 for m in ms:
                     m["pct"] = 100 * (1 - m["free"] / m["total"]) if m["total"] else 0
                 ms.sort(key=lambda m: m["pct"])
+                ms = [m for m in ms if m["writable"]]
+                if len(ms) < 2:
+                    break
                 low, high = ms[0], ms[-1]
                 if high["pct"] - low["pct"] <= cfg["balance_threshold_pct"]:
                     break
@@ -613,7 +636,7 @@ class Replicator:
         if len(pool["members"]) < 2:
             raise ValueError("Die letzte Platte kann nicht entfernt werden")
         self._rescan(pool)
-        others = [m for m in self.members(pool) if m["uuid"] != uuid]
+        others = [m for m in self.members(pool) if m["uuid"] != uuid and m["writable"]]
         src_branch = next((b for u, b, ok in self.pools.branches(pool) if u == uuid and ok), None)
         rows = self.index.files_on_disk(pool_id, uuid)
         self.job.update(phase="Dateien auf andere Platten kopieren", total=len(rows))
@@ -687,5 +710,6 @@ class Replicator:
         with self.lock:
             qlen = len(self.queue)
         return {"config": self.cfg(), "read_only": self.options["read_only"], "queue": qlen,
+                "paused": self.paused_reason,
                 "current": self.current, "job": job, "watch": self.watch, "stats": self.stats,
                 "activity": list(self.activity)[:60]}

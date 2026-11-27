@@ -38,6 +38,25 @@ verschiedenen Platten liegt, wie es das Soll ihres Ordners vorgibt.
 - Bei der Übernahme eines DrivePools wird das Soll automatisch auf die erkannte Duplizierung gesetzt.
 - Läuft nur, wenn `read_only` ausgeschaltet ist.
 
+## Ausfall, Neustart, Stromausfall
+
+- **Platte fällt aus:** wird nach ca. 20 s erkannt, aus dem Pool gelöst, in HA gemeldet; Dateien mit
+  Duplizierung werden sofort auf die übrigen Platten nachkopiert. Dateien, die nur 1× auf der
+  defekten Platte lagen, sind verloren (wie bei DrivePool). Übersicht → „Ersetzen …“ nimmt eine neue
+  Platte auf und stellt das Soll wieder her.
+- **Neustart (Updates):** Core-Updates betreffen das Add-on nicht. Bei OS-/Supervisor-Neustart wird
+  sauber ausgehängt; nach dem Start läuft ein Abgleich, Reste abgebrochener Kopien werden entfernt.
+- **Stromausfall:** Unsaubere NTFS-Platten werden erkannt und standardmäßig nur lesend eingebunden,
+  bis sie geprüft sind (Platten → „Prüfen und reparieren“). Empfehlung: USV + NUT-Integration,
+  dann pausiert das Add-on bei Batteriebetrieb und kann bei niedrigem Akku alles sauber aushängen.
+
+## Dateisystem prüfen (chkdsk)
+
+Platten → Partition → **Prüfen** bzw. **Prüfen und reparieren**. Für NTFS wird `ntfsck` verwendet
+(echte Prüfung/Reparatur unter Linux, kann aber kein Windows-Journal nachspielen – Platten, die
+zuletzt unsauber an Windows hingen, besser unter Windows prüfen). Ist `ntfsck` nicht verfügbar, wird
+`ntfsfix` genutzt (nur grundlegende Reparaturen). „Oberflächentest“ startet den SMART-Selbsttest der Platte.
+
 ## Netzwerkfreigaben
 
 Unter **Platten → + Netzwerkfreigabe** lassen sich SMB- (Windows, Synology, QNAP, …) und
@@ -132,5 +151,7 @@ lassen sie sich nur lesend einbinden. Windows vorher vollständig herunterfahren
 3. ✅ SMB-Freigaben und Benutzer (0.5.0)
 4. SSD-Cache (fest je Pool, geteilt oder System-SSD; Mover auf die Platten)
 5. RAID-Modi (mdadm), eigene HA-Integration
+
+✅ Ausfallsicherheit, Dateisystem-Prüfung, USV (0.7.0)
 
 ✅ Duplikatsuche (0.3.0)
