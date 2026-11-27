@@ -17,12 +17,13 @@ from .index import Index
 from .netshares import NetShares
 from .pools import PoolManager
 from .power import PowerManager
+from .replicate import Replicator
 from .smart import SmartMonitor
 from .smb import SambaManager
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 INGRESS_IP = "172.30.32.2"
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 
 log = logging.getLogger("nas")
 
@@ -44,6 +45,7 @@ class App:
         self.power = PowerManager(self.options, self.settings, self.disks)
         self.dupes = DupeFinder(self.options, self.settings, self.pools, self.index)
         self.smb = SambaManager(self.options, self.settings, self.pools)
+        self.rep = Replicator(self.options, self.settings, self.pools, self.index)
         self.stop = threading.Event()
 
     def start(self):
@@ -60,6 +62,9 @@ class App:
             self.smb.error = str(err)
             log.exception("Samba-Start fehlgeschlagen")
         threading.Thread(target=self.smb.watchdog_loop, daemon=True, name="smb-watchdog").start()
+        for fn, name in ((self.rep.worker_loop, "rep-worker"), (self.rep.watch_loop, "rep-watch"),
+                         (self.rep.scheduler_loop, "rep-scheduler")):
+            threading.Thread(target=fn, daemon=True, name=name).start()
         threading.Thread(target=self.power.keepalive_loop, daemon=True, name="keepalive").start()
         threading.Thread(target=self.dupes.scheduler_loop, daemon=True, name="dupe-scheduler").start()
         threading.Thread(target=self._smart_loop, daemon=True, name="smart").start()
@@ -153,6 +158,13 @@ class App:
             if mode == "under":
                 return self.index.under_files(pool, fpath, limit)
             return self.index.files(pid, fpath, mode, limit)
+        if path == "rep/status":
+            return self.rep.status()
+        if path == "rep/copies":
+            pool = self.settings.pool(g("pool"))
+            if not pool:
+                raise ValueError("Pool nicht gefunden")
+            return self.rep.copies_of(pool, g("path"))
         if path == "smb/status":
             return self.smb.status()
         if path == "smb/ha_users":
@@ -189,6 +201,24 @@ class App:
             self.disks.unmount(body["uuid"])
             self.disks.refresh()
             return {"ok": True}
+        if path == "rep/config":
+            return self.rep.set_cfg(body)
+        if path == "rep/start":
+            kw = {}
+            if body.get("pool"):
+                kw["pool_id"] = body["pool"]
+            if body.get("kind") == "entfernen":
+                kw["uuid"] = body["uuid"]
+            self.rep.start_job(body["kind"], **kw)
+            return {"ok": True}
+        if path == "rep/cancel":
+            self.rep.cancel.set()
+            return {"ok": True}
+        if path == "rep/resolve":
+            pool = self.settings.pool(body.get("pool"))
+            if not pool:
+                raise ValueError("Pool nicht gefunden")
+            return {"result": self.rep.resolve(pool, body["path"], body.get("uuid"))}
         if path.startswith("smb/"):
             action = path[4:]
             if action == "config":
@@ -374,6 +404,7 @@ def main():
         app.dupes.stop.set()
         app.dupes.cancel.set()
         app.smb.stop_evt.set()
+        app.rep.stop.set()
         app.smb.stop()
         threading.Thread(target=server.shutdown, daemon=True).start()
 

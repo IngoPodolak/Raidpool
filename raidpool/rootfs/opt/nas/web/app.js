@@ -92,16 +92,20 @@ function renderOverview() {
           sc.status ? `Letzter Scan: ${fmtTime(sc.finished)} – ${esc(sc.status)}${sc.error ? ": " + esc(sc.error) : ""}` : "Noch nicht gescannt"}</div>
         ${running ? `<div class="progress"><div style="width:${prog}%"></div></div>` : ""}
         ${p.error ? `<ul class="warnings"><li>${esc(p.error)}</li></ul>` : ""}
+        ${window.repPoolLine ? window.repPoolLine(p) : ""}
         <h3>Platten</h3>
         ${p.members.map((m) => {
           const u = m.usage; const w = u ? (100 * u.used) / u.total : 0;
           return `<div class="member"><div><b>${esc(m.model || m.disk || m.uuid)}</b> <span class="muted small">${esc(m.disk || "")} ${esc(m.label || "")}</span></div>
             <div>${m.available ? (m.smart_state ? smartBadge({ available: true, state: m.smart_state }) : "") : '<span class="badge bad">fehlt</span>'}</div>
-            <div class="muted small">${u ? fmtBytes(u.free) + " frei von " + fmtBytes(u.total) : "–"}</div><div></div>
+            <div class="muted small">${u ? fmtBytes(u.free) + " frei von " + fmtBytes(u.total) : "–"}</div>
+            <div>${p.members.length > 1 ? `<button class="btn" style="padding:2px 8px;font-size:12px" onclick='removeMember(${js(p.id)}, ${js(m.uuid)}, ${js(m.model || m.label || m.uuid)})'>Aus Pool nehmen</button>` : ""}</div>
             <div class="bar"><div style="width:${w}%;background:var(--seg-data)"></div></div></div>`;
         }).join("")}
         <div class="row" style="margin-top:12px">
           <button class="btn primary" onclick="openDup('${p.id}')">Duplizierung</button>
+          <button class="btn" onclick="repJob('abgleich','${p.id}')" title="Soll-Duplizierung jetzt vollständig herstellen">Jetzt abgleichen</button>
+          <button class="btn" onclick="repJob('balance','${p.id}')" title="Füllstände der Platten angleichen">Ausbalancieren</button>
           <button class="btn" ${running ? "disabled" : ""} onclick="act(()=>api('pools/scan',{pool:'${p.id}'}),'Scan gestartet')">Neu scannen</button>
           <button class="btn" onclick="adopt('${p.id}')">Erkannte Duplizierung als Soll</button>
           ${p.mounted ? `<button class="btn" onclick="act(()=>api('pools/unmount',{pool:'${p.id}'}),'Ausgehängt')">Aushängen</button>`
@@ -307,7 +311,7 @@ async function renderDup() {
   const targetSel = d.path
     ? `<select onchange='setTarget(${js(d.path)}, this.value)'>${opts(f ? f.target : null, f ? f.inherited_target : pool.default_target, true)}</select>`
     : `<select onchange="act(()=>api('pools/default_target',{pool:'${d.pool}',value:+this.value}),'Gespeichert')">${opts(pool.default_target, 1, false)}</select>`;
-  el.innerHTML = `<div class="card">
+  el.innerHTML = (window.repCard ? window.repCard() : "") + `<div class="card">
     <div class="row spread"><div class="row"><select onchange="openDup(this.value)">${pools.map((p) => `<option value="${p.id}" ${p.id === d.pool ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></div>
       <div class="row small muted">Soll-Duplizierung ${d.path ? "dieses Ordners" : "(Standard)"}: ${targetSel}</div></div>
     <div class="crumbs" style="margin-top:12px">${crumbs}</div>
@@ -324,7 +328,7 @@ async function renderDup() {
     .map(([m, l]) => `<button class="${d.mode === m ? "active" : ""}" onclick="setMode('${m}')">${l}</button>`).join("")}</div>
     ${files.length ? `<div class="table-wrap"><table><tr><th>Datei</th><th class="num">Größe</th><th>Kopien</th><th>auf Platten</th></tr>
       ${files.map((x) => `<tr><td class="mono">${esc(d.mode === "direct" ? x.path.split("/").pop() : x.path)}</td><td class="num">${fmtBytes(x.size)}</td>
-        <td><span class="badge ${x.copies > 1 ? "dup" : ""}">${x.copies}×</span>${x.target ? ` <span class="muted small">Soll ${x.target}×</span>` : ""}${x.consistent ? "" : ' <span class="badge warn">abweichend</span>'}</td>
+        <td><span class="badge ${x.copies > 1 ? "dup" : ""}">${x.copies}×</span>${x.target ? ` <span class="muted small">Soll ${x.target}×</span>` : ""}${x.consistent ? "" : ` <span class="badge warn">abweichend</span> <button class="btn" style="padding:1px 8px;font-size:12px" onclick='resolveDialog(${js(d.pool)}, ${js(x.path)})'>Lösen …</button>`}</td>
         <td class="small">${x.disks.split(",").map((u) => esc(diskName(u))).join("<br>")}</td></tr>`).join("")}</table></div>
       ${files.length >= 500 ? '<div class="muted small">Es werden die ersten 500 Einträge angezeigt.</div>' : ""}` : '<div class="muted small">Keine Dateien in dieser Ansicht.</div>'}
   </div>`;
@@ -343,6 +347,7 @@ document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => switch
 async function refresh() {
   try {
     state.status = await api("status");
+    state.rep = await api("rep/status").catch(() => null);
     if (!state.disks.length || state.tab === "disks") await loadDisks();
   } catch (e) { $("#banner").innerHTML = `<div class="banner warn">Keine Verbindung zum Add-on: ${esc(e.message)}</div>`; return; }
   renderBanner();
@@ -351,7 +356,7 @@ async function refresh() {
   else if (state.tab === "dup") await renderDup();
   else if (state.tab === "shares") await window.renderShares();
   else await window.renderDupes();
-  const scanning = state.status.pools.some((p) => p.scan && p.scan.status === "läuft") || (state.tab === "dupes" && window.dupesRunning && window.dupesRunning());
+  const scanning = state.status.pools.some((p) => p.scan && p.scan.status === "läuft") || (state.rep && ((state.rep.job && state.rep.job.running) || state.rep.current || state.rep.queue)) || (state.tab === "dupes" && window.dupesRunning && window.dupesRunning());
   clearTimeout(state.timer);
   state.timer = setTimeout(refresh, scanning ? 3000 : 30000);
 }

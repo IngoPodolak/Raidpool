@@ -79,6 +79,19 @@ class PoolManager:
             self.settings.save()
         self.mount(pool)
         self.start_scan(pool)
+        if adopt:
+            # Bestehenden DrivePool übernehmen: erkannte Duplizierung automatisch als Soll setzen,
+            # damit nie Kopien als „überzählig“ gelten, nur weil das Soll noch fehlt.
+            scan = self.scan_threads.get(pool["id"])
+
+            def adopt_after_scan():
+                scan.join()
+                try:
+                    self.adopt_targets(pool["id"])
+                    log.info("Pool %s: erkannte Duplizierung als Soll übernommen", pool["id"])
+                except Exception as err:  # noqa: BLE001
+                    log.warning("Soll-Übernahme fehlgeschlagen: %s", err)
+            threading.Thread(target=adopt_after_scan, daemon=True).start()
         return pool
 
     def delete(self, pid):
@@ -171,6 +184,9 @@ class PoolManager:
         pool = self.settings.pool(pid)
         if not pool:
             raise ValueError("Pool nicht gefunden")
+        t = self.scan_threads.get(pid)
+        if t and t.is_alive():
+            raise ValueError("Der Scan läuft noch – bitte warten, bis er fertig ist")
         sug = self.index.suggest_targets(pid)
         with self.settings.lock:
             pool["default_target"] = sug.pop("", pool.get("default_target", 1))

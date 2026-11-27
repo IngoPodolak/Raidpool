@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.0
+- **Duplizierung wird hergestellt**: fehlende Kopien werden auf die Platte mit dem meisten freien
+  Platz kopiert (Temp-Datei → Größenprüfung → umbenennen), Änderungszeit bleibt erhalten.
+- **Echtzeit**: neue und geänderte Dateien werden nach kurzer Ruhezeit dupliziert, Änderungen an
+  einer Kopie auf die anderen Platten übertragen, Umbenennen/Löschen über den Pool erkannt.
+- **Täglicher Abgleich** (Standard 04:00) und beim Start – fängt alles ab, was die Echtzeit verpasst.
+- **Unterschiedliche Kopien**: neueste übernehmen oder nur melden; gleich alte Kopien mit anderem
+  Inhalt werden nie automatisch entschieden. Dialog „Lösen …“ zum Auswählen der richtigen Version.
+- **Ausbalancieren** (manuell oder täglich) ab einstellbarem Füllstands-Unterschied, mit Obergrenze pro Lauf.
+- **Platte aus Pool nehmen**: Dateien werden vorher umkopiert; auf der Platte selbst wird nichts gelöscht.
+- Sicherheit: DrivePool-Übernahme setzt das Soll automatisch auf die erkannte Duplizierung;
+  „Überzählige Kopien entfernen“ ist standardmäßig aus. Alles nur mit ausgeschaltetem `read_only`.
+
 ## 0.5.0
 - Neuer Reiter **Freigaben** (SMB/Samba): ganze Pools und einzelne Ordner freigeben – auch beides
   gleichzeitig. Ordnerauswahl per Popup, fehlende Ordner werden angelegt.

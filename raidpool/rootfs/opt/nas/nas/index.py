@@ -154,7 +154,8 @@ class Index:
             folder = parent_of(path)
             t = target_cache.get(folder)
             if t is None:
-                t = target_cache[folder] = effective_target(folder, targets, default)
+                # Soll kann nie höher sein als die Anzahl der Platten im Pool
+                t = target_cache[folder] = min(effective_target(folder, targets, default), max(len(pool["members"]), 1))
             under = copies < t
             p = folder
             while True:
@@ -224,7 +225,7 @@ class Index:
         default = int(pool.get("default_target", 1))
         res = []
         for f in self.files(pool["id"], path, mode="all", limit=1_000_000):
-            t = effective_target(parent_of(f["path"]), targets, default)
+            t = min(effective_target(parent_of(f["path"]), targets, default), max(len(pool["members"]), 1))
             if f["copies"] < t:
                 f["target"] = t
                 res.append(f)
@@ -266,6 +267,69 @@ class Index:
 
         walk("", 1)
         return targets
+
+    # ------------------------------------------------------------ Einzelne Dateien (Replikation)
+    def upsert_file(self, pid, path, size, mtime, disks, consistent=True):
+        with self.lock:
+            self.db.execute("INSERT OR REPLACE INTO files VALUES (?,?,?,?,?,?,?)",
+                            (pid, path, size, mtime, len(disks), ",".join(disks), 1 if consistent else 0))
+            self.db.commit()
+
+    def delete_file(self, pid, path):
+        with self.lock:
+            self.db.execute("DELETE FROM files WHERE pool=? AND path=?", (pid, path))
+            self.db.commit()
+
+    def delete_prefix(self, pid, prefix):
+        with self.lock:
+            self.db.execute("DELETE FROM files WHERE pool=? AND path >= ? AND path < ?",
+                            (pid, prefix + "/", prefix + "/\uffff"))
+            self.db.commit()
+
+    def needs_fix(self, pool, remove_excess=True, members=None):
+        """Pfade, deren Kopienanzahl nicht zum Soll passt oder deren Kopien abweichen."""
+        pid = pool["id"]
+        targets = {k: int(v) for k, v in (pool.get("targets") or {}).items()}
+        default = int(pool.get("default_target", 1))
+        n = members or len(pool["members"])
+        cache = {}
+        out = []
+        with self.lock:
+            rows = self.db.execute("SELECT path, copies, consistent FROM files WHERE pool=?", (pid,)).fetchall()
+        for path, copies, consistent in rows:
+            folder = parent_of(path)
+            t = cache.get(folder)
+            if t is None:
+                t = cache[folder] = min(effective_target(folder, targets, default), n)
+            if copies < t or (remove_excess and copies > t) or not consistent:
+                out.append(path)
+        return out
+
+    def balance_candidates(self, pid, src, dst, limit=200):
+        with self.lock:
+            rows = self.db.execute("SELECT path, size, disks FROM files WHERE pool=? AND size > 0 "
+                                   "ORDER BY size DESC LIMIT 20000", (pid,)).fetchall()
+        res = []
+        for path, size, disks in rows:
+            d = disks.split(",")
+            if src in d and dst not in d:
+                res.append((path, size))
+                if len(res) >= limit:
+                    break
+        return res
+
+    def move_disk(self, pid, path, src, dst):
+        with self.lock:
+            r = self.db.execute("SELECT disks FROM files WHERE pool=? AND path=?", (pid, path)).fetchone()
+            if r:
+                d = [dst if x == src else x for x in r[0].split(",")]
+                self.db.execute("UPDATE files SET disks=? WHERE pool=? AND path=?", (",".join(d), pid, path))
+                self.db.commit()
+
+    def files_on_disk(self, pid, uuid):
+        with self.lock:
+            rows = self.db.execute("SELECT path, size, disks FROM files WHERE pool=?", (pid,)).fetchall()
+        return [(p, s, d) for p, s, d in rows if uuid in d.split(",")]
 
     def delete_pool(self, pid):
         with self.lock:

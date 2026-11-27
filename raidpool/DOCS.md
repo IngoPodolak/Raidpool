@@ -20,6 +20,24 @@ Festplatten-Pool für Home Assistant nach dem Vorbild von StableBit DrivePool.
 Die Dateien bleiben ganz normale Dateien auf NTFS – jede Platte ist an einem Windows-PC
 weiterhin lesbar, und DrivePool kann die Platten jederzeit wieder übernehmen.
 
+## Duplizierung herstellen
+
+Der **Duplizierungsdienst** (Reiter Duplizierung, oben) sorgt dafür, dass jede Datei so oft auf
+verschiedenen Platten liegt, wie es das Soll ihres Ordners vorgibt.
+
+- **Echtzeit:** neue oder geänderte Dateien werden nach einer kurzen Ruhezeit (Standard 30 s)
+  dupliziert. Wird eine Kopie geändert, wird die Änderung auf die anderen Platten übertragen.
+- **Täglicher Abgleich** (Standard 04:00) und beim Start des Add-ons.
+- **Neue Kopien** entstehen auf der Platte mit dem meisten freien Platz, zuerst als Temp-Datei,
+  werden geprüft und erst dann umbenannt. Pro Platte bleibt ein einstellbarer Rest frei.
+- **Unterschiedliche Kopien:** je nach Einstellung gewinnt die neueste, oder es wird nur gemeldet.
+  Sind beide gleich alt, wird nie automatisch entschieden – „Lösen …“ in der Dateiliste.
+- **Überzählige Kopien entfernen** ist standardmäßig aus.
+- **Ausbalancieren:** verschiebt Dateien von vollen auf leere Platten (manuell oder täglich).
+- **Platte aus Pool nehmen** (Übersicht → Platte): kopiert vorher alles, was sonst fehlen würde.
+- Bei der Übernahme eines DrivePools wird das Soll automatisch auf die erkannte Duplizierung gesetzt.
+- Läuft nur, wenn `read_only` ausgeschaltet ist.
+
 ## Netzwerkfreigaben
 
 Unter **Platten → + Netzwerkfreigabe** lassen sich SMB- (Windows, Synology, QNAP, …) und
@@ -110,7 +128,7 @@ lassen sie sich nur lesend einbinden. Windows vorher vollständig herunterfahren
 ## Fahrplan
 
 1. ✅ Pool, DrivePool-Übernahme, SMART, Duplizierungs-Analyse, Weboberfläche
-2. Duplizierung herstellen/abbauen nach Soll, Ausbalancieren, Reparatur bei Plattenausfall
+2. ✅ Duplizierung herstellen, Echtzeit, Ausbalancieren, Platte entfernen (0.6.0)
 3. SMB-Freigaben und Benutzer (Namen aus HA, eigenes SMB-Passwort)
 4. SSD-Cache (fest je Pool, geteilt oder System-SSD; Mover auf die Platten)
 5. RAID-Modi (mdadm), eigene HA-Integration
