@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS scans (
 
 def connect():
     os.makedirs(os.path.dirname(config.INDEX_DB), exist_ok=True)
-    db = sqlite3.connect(config.INDEX_DB, timeout=30, check_same_thread=False)
+    db = sqlite3.connect(config.INDEX_DB, timeout=120, check_same_thread=False)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA journal_mode=WAL")
     db.execute("PRAGMA synchronous=NORMAL")

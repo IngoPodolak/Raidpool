@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.15.1
+- **Duplizierung blieb stehen:** Eine kurz gesperrte Datenbank (während der Duplikatsuche) beendete den
+  Duplizierungsdienst, die Warteschlange wuchs nur noch. Fehler werden jetzt abgefangen und später
+  erneut versucht; die Duplikatsuche hält die Datenbank nicht mehr während langer Lesevorgänge gesperrt.
+- Samba schreibt seine Meldungen in eine Datei statt in eine Pipe – kann Kopiervorgänge nicht mehr
+  ausbremsen, wenn RAIDPool kurz beschäftigt ist.
+- Dateien, die noch auf dem SSD-Cache liegen, landen nicht mehr unnötig in der Warteschlange (der
+  Mover meldet sie nach dem Verschieben).
+- Ordnerstatistik bei großen Pools höchstens alle 5 Minuten neu berechnen (spart CPU).
+
 ## 0.15.0
 - **Duplikatsuche in bestimmten Ordnern:** „Ordner durchsuchen …“ wählt einen oder mehrere Ordner (auch
   ganze Pools oder Netzwerkquellen). Wahlweise mit allen anderen Dateien vergleichen (findet auch Kopien

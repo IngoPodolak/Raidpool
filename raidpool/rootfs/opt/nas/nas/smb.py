@@ -40,6 +40,7 @@ ACCESS = ("none", "ro", "rw")
 
 
 # ---------------------------------------------------------------- HA-Benutzer (WebSocket, ohne Zusatzpakete)
+SMB_LOG = "/run/samba/smbd.log"
 # Samba meldet jede geschlossene/umbenannte/gelöschte Datei über seine Ausgabe an RAIDPool (audit.py)
 AUDIT_LINES = ["   full_audit:prefix = RAIDPOOL|%P", "   full_audit:success = close renameat unlinkat",
                "   full_audit:failure = none", "   full_audit:facility = LOCAL5",
@@ -581,6 +582,9 @@ class SambaManager:
             "   printcap name = /dev/null",
             "   disable spoolss = yes",
             "   log level = 1",
+            f"   log file = {SMB_LOG}",
+            "   max log size = 20000",
+            "   logging = file",
             "   unix extensions = no",
             "   ea support = yes",
             "   store dos attributes = no",
@@ -678,12 +682,28 @@ class SambaManager:
             lines.append("")
         return "\n".join(lines)
 
-    def _pump(self, proc):
-        """Samba-Ausgabe ins Add-on-Log weiterreichen; Änderungsmeldungen (full_audit) an RAIDPool
-        geben statt sie zu protokollieren (sonst stünde jede Datei im Log)."""
+    def _tail(self):
+        """Samba-Logdatei mitlesen: Änderungsmeldungen (full_audit) an RAIDPool, alles andere ins Add-on-Log
+        (Kopfzeilen von Audit-Meldungen werden weggelassen, sonst stünde jede Datei im Log)."""
         import sys  # noqa: PLC0415
-        header = None
-        for raw in proc.stdout:
+        fh, ino, header = None, None, None
+        while True:
+            try:
+                st = os.stat(SMB_LOG)
+                if fh is None or st.st_ino != ino or st.st_size < fh.tell():
+                    if fh:
+                        fh.close()
+                    fh = open(SMB_LOG, "rb")  # noqa: SIM115
+                    if ino is None:
+                        fh.seek(0, os.SEEK_END)   # beim ersten Öffnen Altes überspringen
+                    ino = st.st_ino
+            except OSError:
+                time.sleep(1)
+                continue
+            raw = fh.readline()
+            if not raw:
+                time.sleep(0.2)
+                continue
             line = raw.decode("utf-8", "surrogateescape")
             if "RAIDPOOL|" in line:
                 header = None
@@ -691,7 +711,6 @@ class SambaManager:
                     self.audit.feed(line)
                 continue
             if line.startswith("[") and ".c:" in line:
-                # Kopfzeile von Samba – erst ausgeben, wenn klar ist, dass keine Audit-Zeile folgt
                 if header:
                     sys.stdout.write(header)
                 header = line
@@ -760,9 +779,13 @@ class SambaManager:
                               "Bitte dort stoppen, dann hier „Starten“.")
                 log.error(self.error)
                 return
-            self.proc = subprocess.Popen(["smbd", "--foreground", "--no-process-group", "--debug-stdout",
-                                          "-s", CONF], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            threading.Thread(target=self._pump, args=(self.proc,), daemon=True, name="smbd-log").start()
+            # Samba schreibt in eine Datei, die RAIDPool mitliest. (Eine Pipe könnte Samba ausbremsen, wenn
+            # RAIDPool kurz beschäftigt ist – in eine Datei schreiben blockiert nie.)
+            self.proc = subprocess.Popen(["smbd", "--foreground", "--no-process-group", "-s", CONF],
+                                         stdout=None, stderr=None)
+            if not getattr(self, "_tail_started", False):
+                self._tail_started = True
+                threading.Thread(target=self._tail, daemon=True, name="smbd-log").start()
             self.error = None
             log.info("Samba gestartet (PID %s)", self.proc.pid)
             if self.cfg()["netbios"] or self.cfg()["aliases"]:

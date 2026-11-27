@@ -404,6 +404,7 @@ class DupeFinder:
             with self.lock:
                 self.db.execute("INSERT OR REPLACE INTO hashes VALUES (?,?,?,?,?,?)",
                                 (f[0], f[1], f[2], f[3], partial, full))
+                self.db.commit()   # sofort: sonst bliebe die Datenbank während langer Lesevorgänge gesperrt
             cache[(f[0], f[1])] = (f[2], f[3], partial, full)
 
         # Gleiche Namen zuerst prüfen (häufigster Fall: doppelt heruntergeladen)

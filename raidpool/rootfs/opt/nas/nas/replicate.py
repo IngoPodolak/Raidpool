@@ -446,14 +446,23 @@ class Replicator:
                     else:
                         self.stats["errors"] += 1
                         self.log_act("fehler", f"{rel}: {err}", pid)
+                except Exception as err:  # noqa: BLE001
+                    # z. B. Datenbank kurz gesperrt: später erneut versuchen – der Dienst darf nie stehen bleiben
+                    log.warning("Duplizierung %s: %s – neuer Versuch in 2 Minuten", rel, err)
+                    self.enqueue(pid, rel, master, delay=120)
                 finally:
                     self.current = None
-            if self.dirty_pools and time.time() - last_agg > 60:
+            # Ordnerstatistik höchstens alle 5 Minuten neu berechnen (bei großen Pools aufwendig)
+            if self.dirty_pools and time.time() - last_agg > 300:
                 for pid in list(self.dirty_pools):
                     self.dirty_pools.discard(pid)
                     pool = self.settings.pool(pid)
                     if pool:
-                        self.index.aggregate(pool)
+                        try:
+                            self.index.aggregate(pool)
+                        except Exception as err:  # noqa: BLE001
+                            log.warning("Ordnerstatistik %s: %s", pid, err)
+                            self.dirty_pools.add(pid)
                 last_agg = time.time()
             # abgelaufene Selbst-Ignorierungen aufräumen
             if len(self.self_ops) > 1000:
@@ -554,6 +563,14 @@ class Replicator:
                     return (pool["id"], rel, uuid) if rel and not _ignored(rel) else None
         return None
 
+    def _in_cache(self, pid, rel):
+        cache = getattr(self.pools, "cache", None)
+        pool = self.settings.pool(pid)
+        if not cache or not pool or not cache.active(pool):
+            return False
+        from .cache import cache_dir
+        return os.path.isfile(os.path.join(cache_dir(pool), rel))
+
     def external_event(self, op, path, new=None):
         if not (self.cfg()["enabled"] and self.cfg()["realtime"] and self.writable()):
             return
@@ -569,6 +586,8 @@ class Replicator:
             # reines Lesen/Abspielen löst so keine Arbeit aus
             if not stat.S_ISREG(st.st_mode) or time.time() - st.st_ctime > 600:
                 return
+            if loc[2] is None and self._in_cache(loc[0], loc[1]):
+                return     # liegt noch auf dem SSD-Cache – der Mover meldet die Datei nach dem Verschieben
             if not self._is_self_op(path):
                 self.enqueue(loc[0], loc[1], loc[2])
         elif op == "delete":
