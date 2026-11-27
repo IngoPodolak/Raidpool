@@ -25,7 +25,7 @@ from .smb import SambaManager
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 INGRESS_IP = "172.30.32.2"
-VERSION = "0.10.0"
+VERSION = "0.10.1"
 
 log = logging.getLogger("nas")
 
@@ -54,7 +54,25 @@ class App:
         self.mqtt.cleanup_previous()
         self.stop = threading.Event()
 
+    def protection_mode(self):
+        """Schutzmodus der App aktiv? Dann verweigert der Supervisor den Zugriff auf die Platten."""
+        token = os.environ.get("SUPERVISOR_TOKEN")
+        if not token or config.DEV:
+            return False
+        import urllib.request  # noqa: PLC0415
+        try:
+            req = urllib.request.Request("http://supervisor/addons/self/info",
+                                         headers={"Authorization": f"Bearer {token}"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return bool((json.loads(resp.read()).get("data") or {}).get("protected"))
+        except Exception:  # noqa: BLE001
+            return False
+
     def start(self):
+        self.protected = self.protection_mode()
+        if self.protected:
+            log.error("Schutzmodus ist aktiv – ohne vollen Zugriff können keine Platten eingebunden werden. "
+                      "Bitte in Home Assistant bei der App RAIDPool den Schutzmodus ausschalten und neu starten.")
         self.net.auto_mount()
         if self.options["auto_mount_ntfs"]:
             self.disks.auto_mount()
@@ -136,6 +154,7 @@ class App:
         g = lambda k, d=None: (q.get(k) or [d])[0]  # noqa: E731
         if path == "status":
             return {"version": VERSION, "options": self.options, "dev": config.DEV, "mqtt": self.mqtt.status(),
+                    "protected": getattr(self, "protected", False),
                     "pools": self.pool_states(), "candidates": self.drivepool_candidates()}
         if path == "disks":
             self.disks.refresh()

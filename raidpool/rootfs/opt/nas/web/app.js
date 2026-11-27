@@ -85,6 +85,8 @@ function diskDonut(u, size = 64) {
 // ---------------------------------------------------------------- Übersicht
 function renderBanner() {
   const s = state.status; const el = $("#banner"); let html = "";
+  if (s.protected) html += `<div class="banner warn"><b>Kein Zugriff auf die Platten:</b> Der <b>Schutzmodus</b> dieser App ist eingeschaltet.
+    Bitte in Home Assistant unter Einstellungen → Apps → RAIDPool den Schalter „Schutzmodus“ ausschalten und die App neu starten.</div>`;
   if (s.options.read_only) html += `<div class="banner warn"><b>Schreibschutz aktiv.</b> Alle Platten und Pools werden nur lesend eingebunden – nichts auf den Platten wird verändert. Zum Schreiben in den Add-on-Optionen <code>read_only</code> ausschalten.</div>`;
   if (window.healthBanner) html += window.healthBanner();
   if (s.candidates.length) html += `<div class="banner row spread"><div><b>Bestehender DrivePool gefunden:</b> ${s.candidates.length} PoolPart-Ordner auf ${new Set(s.candidates.map((c) => c.uuid)).size} Platten.</div><button class="btn primary" onclick="openCreate(true)">Als Pool übernehmen</button></div>`;

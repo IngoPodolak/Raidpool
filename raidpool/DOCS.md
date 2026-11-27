@@ -156,6 +156,12 @@ Zum Beobachten gibt es pro Platte die Zähler „Anläufe“ und „Kopf-Parkvor
 (auch als Sensoren). Steigen die Parkvorgänge im Dauerbetrieb trotzdem schnell, unterstützt die
 Platte das Abschalten des Kopfparkens nicht über APM (z. B. WD Green – dort hilft `idle3-tools`).
 
+## Wichtig nach der Installation: Schutzmodus ausschalten
+
+RAIDPool braucht direkten Zugriff auf die Festplatten. Home Assistant schaltet bei neuen Apps den
+**Schutzmodus** ein, der genau das verhindert („Operation not permitted“ beim Einhängen).
+Einstellungen → Apps → RAIDPool → **Schutzmodus** ausschalten → App neu starten.
+
 ## Sicherheit
 
 `read_only: true` (Standard) bindet **alles nur lesend** ein. Auf den Platten wird dann nichts

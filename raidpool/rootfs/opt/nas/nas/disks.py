@@ -185,7 +185,10 @@ class DiskManager:
                 return mp
             last = err.strip()
             log.warning("Einhängen mit %s fehlgeschlagen: %s", cmd[0] if cmd[0] != "mount" else cmd[2], last)
-        if "hibernat" in last.lower() or "unclean" in last.lower() or "dirty" in last.lower():
+        if "operation not permitted" in last.lower() or "can't open blockdev" in last.lower():
+            last = ("Kein Zugriff auf die Platte. Bitte in Home Assistant bei der App RAIDPool den "
+                    "„Schutzmodus“ ausschalten und die App neu starten.")
+        elif "hibernat" in last.lower() or "unclean" in last.lower() or "dirty" in last.lower():
             last += " – Windows wurde nicht vollständig heruntergefahren (Schnellstart). " \
                     "Platte an Windows sauber herunterfahren oder schreibgeschützt einbinden."
         self.errors[uuid] = last

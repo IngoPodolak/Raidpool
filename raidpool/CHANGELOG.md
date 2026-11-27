@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.1
+- Erkennt den **Schutzmodus** der App: Hinweis in der Oberfläche und im Protokoll, statt der
+  irreführenden Meldung zum Windows-Schnellstart
+- Klare Fehlermeldung, wenn der Zugriff auf eine Platte verweigert wird
+
 ## 0.10.0
 - Name überall nur noch **RAIDPool** (auch MQTT-Gerät, Seitenleiste, Meldungen)
 - Neue Entitäten: **Größe, Frei, Belegt (GB)** je Platte; je Pool zusätzlich Belegt (GB),
