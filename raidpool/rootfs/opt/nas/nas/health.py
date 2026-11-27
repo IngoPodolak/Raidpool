@@ -79,7 +79,7 @@ class Health:
             return
         try:
             ha_call("POST", "services/persistent_notification/create",
-                    {"title": f"HA RAIDPool: {title}", "message": message,
+                    {"title": f"RAIDPool: {title}", "message": message,
                      "notification_id": f"raidpool_{nid or int(time.time())}"})
         except Exception as err:  # noqa: BLE001
             log.debug("Meldung an HA fehlgeschlagen: %s", err)

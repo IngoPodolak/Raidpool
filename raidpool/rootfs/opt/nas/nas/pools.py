@@ -313,7 +313,8 @@ class PoolManager:
                 "pool_logical": root.get("bytes") or 0,     # Daten ohne Duplikate
                 "pool_stored": stored,                      # inkl. Duplikate
                 "duplication_overhead": stored - (root.get("bytes") or 0),
-                "other": max(used_disk - stored, 0),        # Fremddaten außerhalb des Pools
+                # alles, was weder frei noch Pool-Daten ist (Fremddaten, Dateisystem-Reserve)
+                "other": max(total - free - stored, 0),
             },
             "files": root.get("files") or 0,
             "dup": {k: root.get(k) or 0 for k in ("c1", "c2", "c3", "inconsistent", "under")},

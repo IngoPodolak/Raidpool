@@ -1,5 +1,5 @@
 "use strict";
-// HA RAIDPool – Weboberfläche (läuft über HA-Ingress, daher nur relative URLs)
+// RAIDPool – Weboberfläche (läuft über HA-Ingress, daher nur relative URLs)
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -42,16 +42,44 @@ function diskName(uuid) {
   for (const d of state.disks) for (const p of d.partitions) if (p.uuid === uuid) return (d.model || d.name) + (p.label ? " · " + p.label : "");
   return uuid.slice(0, 8);
 }
+// Tortendiagramm (Donut) als SVG: segs = [{v, color, label}]
+function donut(segs, size = 120, center = "", sub = "") {
+  const total = segs.reduce((a, x) => a + Math.max(0, x.v || 0), 0) || 1;
+  const r = 15.9155; // Umfang 100
+  let off = 25;
+  const stroke = size < 60 ? 6 : 4.2;
+  const arcs = segs.map((x) => {
+    const pct = (100 * Math.max(0, x.v || 0)) / total;
+    const el = pct > 0 ? `<circle r="${r}" cx="21" cy="21" fill="transparent" stroke="${x.color}" stroke-width="${stroke}"
+      stroke-dasharray="${pct.toFixed(3)} ${(100 - pct).toFixed(3)}" stroke-dashoffset="${off.toFixed(3)}"><title>${esc(x.label)}: ${pct.toFixed(1)} %</title></circle>` : "";
+    off = (off - pct + 100) % 100;
+    return el;
+  }).join("");
+  return `<svg class="donut" width="${size}" height="${size}" viewBox="0 0 42 42" role="img">
+    <circle r="${r}" cx="21" cy="21" fill="transparent" stroke="var(--seg-free)" stroke-width="${stroke}"></circle>${arcs}
+    ${center ? `<text x="21" y="${sub ? 20.5 : 22.5}" text-anchor="middle" class="donut-c">${esc(center)}</text>` : ""}
+    ${sub ? `<text x="21" y="26" text-anchor="middle" class="donut-s">${esc(sub)}</text>` : ""}</svg>`;
+}
+function chartLegend(segs, total) {
+  return `<div class="dlegend">${segs.map((x) => `<div><i style="background:${x.color}"></i><span>${esc(x.label)}</span>
+    <b>${fmtBytes(x.v)}</b><span class="muted">${total ? ((100 * x.v) / total).toFixed(1) : 0} %</span></div>`).join("")}</div>`;
+}
 function usageBar(sp) {
   const t = sp.total || 1;
-  const w = (v) => Math.max(0, (100 * v) / t).toFixed(2) + "%";
-  return `<div class="bar"><div style="width:${w(sp.pool_logical)};background:var(--seg-data)"></div>
-    <div style="width:${w(sp.duplication_overhead)};background:var(--seg-dup)"></div>
-    <div style="width:${w(sp.other)};background:var(--seg-other)"></div></div>
-    <div class="legend"><span><i style="background:var(--seg-data)"></i>Daten ${fmtBytes(sp.pool_logical)}</span>
-    <span><i style="background:var(--seg-dup)"></i>Duplikate ${fmtBytes(sp.duplication_overhead)}</span>
-    <span><i style="background:var(--seg-other)"></i>Sonstiges ${fmtBytes(sp.other)}</span>
-    <span><i style="background:var(--seg-free)"></i>Frei ${fmtBytes(sp.free)}</span></div>`;
+  const segs = [{ v: sp.pool_logical, color: "var(--seg-data)", label: "Daten" },
+    { v: sp.duplication_overhead, color: "var(--seg-dup)", label: "Duplikate" },
+    { v: sp.other, color: "var(--seg-other)", label: "Sonstiges" },
+    { v: sp.free, color: "var(--seg-free)", label: "Frei" }];
+  const pct = Math.round((100 * (t - sp.free)) / t);
+  return `<div class="chartrow">${donut(segs.slice(0, 3).concat([{ v: sp.free, color: "transparent", label: "Frei" }]), 130, pct + " %", "belegt")}
+    ${chartLegend(segs, sp.total)}</div>`;
+}
+function diskDonut(u, size = 64) {
+  if (!u || !u.total) return "";
+  const used = u.total - u.free;   // inkl. Dateisystem-Reserve, damit Belegt + Frei = Größe
+  const pct = Math.round((100 * used) / u.total);
+  return donut([{ v: used, color: pct > 90 ? "var(--bad)" : pct > 80 ? "var(--warn)" : "var(--seg-data)", label: "Belegt" },
+    { v: u.free, color: "transparent", label: "Frei" }], size, size >= 50 ? pct + " %" : "");
 }
 
 // ---------------------------------------------------------------- Übersicht
@@ -70,7 +98,8 @@ function renderOverview() {
     return;
   }
   const mq = s.mqtt || {};
-  const integ = mq.connected ? `<div class="small muted" style="margin:-6px 0 10px">🔗 In Home Assistant eingebunden über MQTT · ${fmtNum(mq.entities)} Entitäten</div>`
+  const integ = mq.connected ? `<div class="row small muted" style="margin:-6px 0 10px">🔗 In Home Assistant eingebunden über MQTT · ${fmtNum(mq.entities)} Entitäten
+      <button class="btn" style="padding:2px 10px;font-size:12px" onclick="makeDashboard()">Dashboard in HA erzeugen</button></div>`
     : `<div class="small muted" style="margin:-6px 0 10px">🔗 ${esc(mq.error || "Verbinde mit Home Assistant …")}</div>`;
   el.innerHTML = `<div class="row spread"><h2>Pools</h2><button class="btn" onclick="openCreate(false)">+ Pool</button></div>${integ}<div class="grid">` +
     s.pools.map((p) => {
@@ -100,12 +129,12 @@ function renderOverview() {
         <h3>Platten</h3>
         ${p.members.map((m) => {
           const u = m.usage; const w = u ? (100 * u.used) / u.total : 0;
-          return `<div class="member"><div><b>${esc(m.model || m.disk || m.uuid)}</b> <span class="muted small">${esc(m.disk || "")} ${esc(m.label || "")}</span></div>
+          return `<div class="member"><div class="row" style="flex-wrap:nowrap">${diskDonut(u, 34)}<div><b>${esc(m.model || m.disk || m.uuid)}</b> <span class="muted small">${esc(m.disk || "")} ${esc(m.label || "")}</span></div></div>
             <div>${m.available ? (m.smart_state ? smartBadge({ available: true, state: m.smart_state }) : "") : '<span class="badge bad">fehlt</span>'}</div>
             <div class="muted small">${u ? fmtBytes(u.free) + " frei von " + fmtBytes(u.total) : "–"}</div>
             <div>${!m.available ? `<button class="btn primary" style="padding:2px 8px;font-size:12px" onclick='memberDialog(${js(p.id)}, ${js(m.uuid)}, ${js(m.model || m.label || m.uuid)})'>Ersetzen …</button>`
               : p.members.length > 1 ? `<button class="btn" style="padding:2px 8px;font-size:12px" onclick='removeMember(${js(p.id)}, ${js(m.uuid)}, ${js(m.model || m.label || m.uuid)})'>Aus Pool nehmen</button>` : ""}</div>
-            <div class="bar"><div style="width:${w}%;background:var(--seg-data)"></div></div></div>`;
+            </div>`;
         }).join("")}
         <div style="margin-top:6px"><button class="btn" style="font-size:12px;padding:3px 10px" onclick='memberDialog(${js(p.id)})'>+ Platte hinzufügen</button></div>
         <div class="row" style="margin-top:12px">
@@ -192,8 +221,7 @@ function netCard(d) {
   return `<div class="card"><div class="row spread"><b>🌐 ${esc(s.name)}</b><div class="row">
       <span class="badge info">${s.kind.toUpperCase()}</span>${p.mountpoint ? '<span class="badge ok">verbunden</span>' : '<span class="badge bad">getrennt</span>'}</div></div>
     <div class="muted small mono">${esc(d.path)}${s.username ? " · " + esc(s.username) : " · Gast"}</div>
-    ${u ? `<div class="bar"><div style="width:${(100 * u.used) / u.total}%;background:var(--seg-data)"></div></div>
-      <div class="muted small">${fmtBytes(u.used)} belegt · ${fmtBytes(u.free)} frei von ${fmtBytes(u.total)}</div>` : ""}
+    ${u ? `<div class="chartrow" style="margin:8px 0">${diskDonut(u, 76)}${chartLegend([{ v: u.total - u.free, color: "var(--seg-data)", label: "Belegt" }, { v: u.free, color: "var(--seg-free)", label: "Frei" }], u.total)}</div>` : ""}
     <div class="row" style="margin-top:6px">${p.pool ? `<span class="badge info">Pool ${esc(p.pool)}</span>` : ""}${p.poolparts.length && !p.pool ? '<span class="badge dup">DrivePool</span>' : ""}
       ${p.poolparts.map((x) => `<span class="mono small muted">${esc(x)}</span>`).join(" ")}</div>
     ${p.error ? `<ul class="warnings"><li>${esc(p.error)}</li></ul>` : ""}
@@ -288,7 +316,7 @@ function renderDisks() {
             ${p.pool ? `<span class="badge info">Pool ${esc(p.pool)}</span>` : ""}${p.poolparts.length && !p.pool ? '<span class="badge dup">DrivePool</span>' : ""}</div>
           <div>${d.system ? "" : p.mountpoint ? `<span class="badge ok">${p.mount_ro === false ? "rw" : "ro"}</span> <button class="btn" onclick="act(()=>api('disks/unmount',{uuid:'${p.uuid}'}),'Ausgehängt')">Aushängen</button>`
             : `<button class="btn" onclick="act(()=>api('disks/mount',{uuid:'${p.uuid}'}),'Eingehängt')">Einhängen</button>`}</div>
-          <div class="muted small" style="grid-column:1/-1">${p.usage ? fmtBytes(p.usage.used) + " belegt, " + fmtBytes(p.usage.free) + " frei" : ""}
+          <div class="muted small" style="grid-column:1/-1">${p.usage ? `<div class="chartrow" style="margin:6px 0">${diskDonut(p.usage, 76)}${chartLegend([{ v: p.usage.total - p.usage.free, color: "var(--seg-data)", label: "Belegt" }, { v: p.usage.free, color: "var(--seg-free)", label: "Frei" }], p.usage.total)}</div>` : ""}
             ${p.poolparts.map((x) => `<div class="mono">${esc(x)}</div>`).join("")}${p.error ? `<ul class="warnings"><li>${esc(p.error)}</li></ul>` : ""}
             ${!d.system && window.fsckLine ? window.fsckLine(d, p) : ""}</div></div>`).join("") || '<div class="muted small">Keine Partitionen</div>'}
       </div>`;
@@ -371,3 +399,8 @@ async function refresh() {
 }
 window.act = act; window.api = api;
 refresh();
+
+window.makeDashboard = () => {
+  if (!confirm("Dashboard „RAIDPool“ in Home Assistant anlegen bzw. aktualisieren?\n\nEs enthält Tortendiagramme (apexcharts-card) und Bubble Cards für alle Pools und Platten. Eigene Änderungen an diesem Dashboard werden dabei überschrieben.")) return;
+  act(async () => { const r = await api("ha/dashboard", {}); toast(`Dashboard erzeugt: ${r.url}`); });
+};

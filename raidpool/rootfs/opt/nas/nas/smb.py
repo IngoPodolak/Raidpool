@@ -70,15 +70,13 @@ def _ws_recv(sock_file):
             return json.loads(msg.decode())
 
 
-def ha_users():
-    """Benutzer aus Home Assistant (config/auth/list über die Supervisor-Core-Proxy-WebSocket)."""
+def ha_ws(messages, timeout=20):
+    """Befehle an die Home-Assistant-WebSocket-API (über den Supervisor-Proxy) senden.
+    messages: Liste von Dicts ohne id. Gibt die Ergebnisse in derselben Reihenfolge zurück."""
     token = os.environ.get("SUPERVISOR_TOKEN")
-    if config.DEV:
-        return [{"username": "ingo", "name": "Ingo"}, {"username": "anna", "name": "Anna"},
-                {"username": "kiosk", "name": "Wandpanel"}]
     if not token:
-        return []
-    s = socket.create_connection(("supervisor", 80), timeout=10)
+        raise RuntimeError("Keine Verbindung zu Home Assistant (kein Supervisor-Token)")
+    s = socket.create_connection(("supervisor", 80), timeout=timeout)
     try:
         key = base64.b64encode(os.urandom(16)).decode()
         s.sendall((f"GET /core/websocket HTTP/1.1\r\nHost: supervisor\r\nUpgrade: websocket\r\n"
@@ -94,16 +92,35 @@ def ha_users():
         s.sendall(_ws_frame(json.dumps({"type": "auth", "access_token": token})))
         if _ws_recv(f).get("type") != "auth_ok":
             raise RuntimeError("Anmeldung an Home Assistant fehlgeschlagen")
-        s.sendall(_ws_frame(json.dumps({"id": 1, "type": "config/auth/list"})))
-        res = _ws_recv(f)
-        users = []
-        for u in res.get("result") or []:
-            if u.get("system_generated") or not u.get("is_active", True) or not u.get("username"):
-                continue
-            users.append({"username": u["username"].lower(), "name": u.get("name") or u["username"]})
-        return users
+        results = []
+        for i, msg in enumerate(messages, start=1):
+            s.sendall(_ws_frame(json.dumps(dict(msg, id=i))))
+            while True:
+                res = _ws_recv(f)
+                if res.get("id") == i and res.get("type") == "result":
+                    break
+            if not res.get("success", False):
+                err = (res.get("error") or {}).get("message") or "Fehler"
+                raise RuntimeError(f"{msg.get('type')}: {err}")
+            results.append(res.get("result"))
+        return results
     finally:
         s.close()
+
+
+def ha_users():
+    """Benutzer aus Home Assistant (config/auth/list)."""
+    if config.DEV:
+        return [{"username": "ingo", "name": "Ingo"}, {"username": "anna", "name": "Anna"},
+                {"username": "kiosk", "name": "Wandpanel"}]
+    if not os.environ.get("SUPERVISOR_TOKEN"):
+        return []
+    users = []
+    for u in ha_ws([{"type": "config/auth/list"}])[0] or []:
+        if u.get("system_generated") or not u.get("is_active", True) or not u.get("username"):
+            continue
+        users.append({"username": u["username"].lower(), "name": u.get("name") or u["username"]})
+    return users
 
 
 # ---------------------------------------------------------------- Verwaltung
@@ -531,11 +548,11 @@ class SambaManager:
         ro_global = self.options["read_only"]
         enabled_users = {u["name"] for u in self.users() if u.get("enabled", True)}
         lines = [
-            "# Automatisch erzeugt von HA RAIDPool – Änderungen werden überschrieben",
+            "# Automatisch erzeugt von RAIDPool – Änderungen werden überschrieben",
             "[global]",
             f"   workgroup = {c['workgroup']}",
             f"   netbios name = {self.server_name()}",
-            "   server string = HA RAIDPool",
+            "   server string = RAIDPool",
             "   server role = standalone server",
             f"   passdb backend = tdbsam:{SAMBA_DIR}/passdb.tdb",
             f"   private dir = {SAMBA_DIR}/private",

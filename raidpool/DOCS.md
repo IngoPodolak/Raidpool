@@ -1,4 +1,4 @@
-# HA RAIDPool
+# RAIDPool
 
 Festplatten-Pool für Home Assistant nach dem Vorbild von StableBit DrivePool.
 
@@ -59,16 +59,24 @@ zuletzt unsauber an Windows hingen, besser unter Windows prüfen). Ist `ntfsck` 
 
 ## Integration in Home Assistant
 
-Läuft der **Mosquitto-Broker** (offizielles Add-on), legt HA RAIDPool automatisch Geräte und
+Läuft der **Mosquitto-Broker** (offizielles Add-on), legt RAIDPool automatisch Geräte und
 Entitäten an – keine zusätzliche Installation nötig:
 
-- **HA RAIDPool**: Schalter SMB-Freigaben, Duplizierung, Direktfreigaben; Tasten Abgleich,
+- **RAIDPool**: Schalter SMB-Freigaben, Duplizierung, Direktfreigaben; Tasten Abgleich,
   Ausbalancieren, Duplikatsuche, SMART aktualisieren; Sensoren Duplikate, Warteschlange,
   SMB-Verbindungen, Problem, USV.
 - **Pool …**: Belegt, Frei, Gesamt, Daten, Dateien, unter Soll, abweichende Kopien, Problem,
   Eingehängt; Tasten Neu scannen und Abgleich.
 - **Platte …**: Temperatur, Zustand, Belegt, Betriebsstunden, Anläufe, Kopf-Parkvorgänge,
   Problem und Schalter **Direktfreigabe**.
+
+### Dashboard
+
+Übersicht → **Dashboard in HA erzeugen** legt das Dashboard „RAIDPool“ (Seitenleiste) an bzw.
+aktualisiert es: Steuerung (Bubble Cards), je Pool ein Tortendiagramm (apexcharts-card) mit Daten,
+Duplikaten, Sonstigem und freiem Platz plus Füllstand als Bubble-Slider, je Platte Füllstand,
+Temperatur, Größe/Frei und ein Tortendiagramm. Benötigt die Karten **apexcharts-card** und
+**Bubble Card**. Eigene Änderungen an diesem Dashboard werden beim erneuten Erzeugen überschrieben.
 
 ## Direktfreigaben
 

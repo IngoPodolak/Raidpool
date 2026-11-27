@@ -1,5 +1,5 @@
 "use strict";
-// HA RAIDPool – Reiter „Freigaben“ (SMB)
+// RAIDPool – Reiter „Freigaben“ (SMB)
 
 const sh = { st: null, draft: null, cfgOpen: false };
 const ACC_LABEL = { none: "Kein Zugriff", ro: "Lesen", rw: "Lesen + Schreiben" };

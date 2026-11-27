@@ -1,5 +1,5 @@
 "use strict";
-// HA RAIDPool – Reiter „Duplikate“
+// RAIDPool – Reiter „Duplikate“
 
 const dz = {
   status: null, data: null, key: "", offset: 0, search: "", showIgnored: false,

@@ -25,7 +25,7 @@ from .smb import SambaManager
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 INGRESS_IP = "172.30.32.2"
-VERSION = "0.9.0"
+VERSION = "0.10.0"
 
 log = logging.getLogger("nas")
 
@@ -239,6 +239,9 @@ class App:
                 except ValueError:
                     pass
             return {"ok": True, "reconcile": started}
+        if path == "ha/dashboard":
+            from .dashboard import publish
+            return publish(self)
         if path == "rep/config":
             return self.rep.set_cfg(body)
         if path == "rep/start":
@@ -373,7 +376,7 @@ class App:
 
 def make_handler(app):
     class Handler(BaseHTTPRequestHandler):
-        server_version = "HARAIDPool/" + VERSION
+        server_version = "RAIDPool/" + VERSION
 
         def log_message(self, fmt, *args):
             log.debug("http: " + fmt, *args)

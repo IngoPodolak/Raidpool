@@ -1,6 +1,6 @@
 #!/usr/bin/with-contenv bashio
 # shellcheck shell=bash
-bashio::log.info "Starte HA RAIDPool ..."
+bashio::log.info "Starte RAIDPool ..."
 modprobe ntfs3 2>/dev/null || true
 modprobe fuse 2>/dev/null || true
 cd /opt/nas || exit 1

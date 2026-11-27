@@ -1,5 +1,5 @@
 "use strict";
-// HA RAIDPool – Gesundheit: Ausfälle, Platte hinzufügen/ersetzen, Dateisystem-Prüfung, SMART-Test, USV
+// RAIDPool – Gesundheit: Ausfälle, Platte hinzufügen/ersetzen, Dateisystem-Prüfung, SMART-Test, USV
 
 const hp = { cfgOpen: false, ups: null };
 const FSCK_FS = ["ntfs", "ext4", "xfs", "btrfs", "exfat"];

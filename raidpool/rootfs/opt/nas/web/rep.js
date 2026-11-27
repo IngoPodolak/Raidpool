@@ -1,5 +1,5 @@
 "use strict";
-// HA RAIDPool – Duplizierungsdienst (Soll herstellen, Echtzeit, Ausbalancieren, Platte entfernen)
+// RAIDPool – Duplizierungsdienst (Soll herstellen, Echtzeit, Ausbalancieren, Platte entfernen)
 
 const rp = { cfgOpen: false, logOpen: false };
 const ACT_ICON = { dupliziert: "➕", aktualisiert: "🔄", entfernt: "➖", verschoben: "↔️", umkopiert: "📦",

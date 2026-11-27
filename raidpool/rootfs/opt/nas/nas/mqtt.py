@@ -1,6 +1,6 @@
 """Integration in Home Assistant über MQTT-Discovery.
 
-Geräte: „HA RAIDPool“ (Add-on), je Pool ein Gerät, je Platte ein Gerät.
+Geräte: „RAIDPool“ (Add-on), je Pool ein Gerät, je Platte ein Gerät.
 Entitäten: Sensoren, Problem-Sensoren, Schalter (Samba, Duplizierung, Direktfreigaben pro Platte)
 und Tasten (Abgleich, Ausbalancieren, Scan, Duplikatsuche, SMART).
 Der Broker (Mosquitto-Add-on) wird automatisch über den Supervisor gefunden.
@@ -176,7 +176,7 @@ class MqttBridge:
         ents = []
         cmds = {}
         ver = getattr(app, "version", "")
-        main_dev = {"identifiers": ["raidpool_main"], "name": "HA RAIDPool", "manufacturer": "Podolan",
+        main_dev = {"identifiers": ["raidpool_main"], "name": "RAIDPool", "manufacturer": "Podolan",
                     "model": "NAS-Add-on", "sw_version": ver}
 
         def add(comp, oid, name, dev, state=None, **cfg):
@@ -238,12 +238,14 @@ class MqttBridge:
             o = f"raidpool_{_slug(pid)}"
             add("sensor", f"{o}_belegt", "Belegt", dev, pct, unit_of_measurement="%", state_class="measurement",
                 icon="mdi:chart-donut")
-            add("sensor", f"{o}_frei", "Frei", dev, round(sp["free"] / 1e9, 1), unit_of_measurement="GB",
-                device_class="data_size", state_class="measurement")
-            add("sensor", f"{o}_gesamt", "Gesamt", dev, round(sp["total"] / 1e9, 1), unit_of_measurement="GB",
-                device_class="data_size")
-            add("sensor", f"{o}_daten", "Daten (ohne Kopien)", dev, round(sp["pool_logical"] / 1e9, 2),
-                unit_of_measurement="GB", device_class="data_size", state_class="measurement")
+            gb = dict(unit_of_measurement="GB", device_class="data_size", state_class="measurement",
+                      suggested_display_precision=1)
+            add("sensor", f"{o}_frei", "Frei", dev, round(sp["free"] / 1e9, 2), **gb)
+            add("sensor", f"{o}_gesamt", "Gesamt", dev, round(sp["total"] / 1e9, 2), **gb)
+            add("sensor", f"{o}_belegt_gb", "Belegt (Speicher)", dev, round((sp["total"] - sp["free"]) / 1e9, 2), **gb)
+            add("sensor", f"{o}_daten", "Daten (ohne Kopien)", dev, round(sp["pool_logical"] / 1e9, 2), **gb)
+            add("sensor", f"{o}_duplikate", "Duplizierte Kopien", dev, round(sp["duplication_overhead"] / 1e9, 2), **gb)
+            add("sensor", f"{o}_sonstiges", "Sonstiges (außerhalb Pool)", dev, round(sp["other"] / 1e9, 2), **gb)
             add("sensor", f"{o}_dateien", "Dateien", dev, p["files"], state_class="measurement", icon="mdi:file")
             add("sensor", f"{o}_unter_soll", "Dateien unter Soll", dev, p["dup"]["under"], state_class="measurement",
                 icon="mdi:content-duplicate")
@@ -285,9 +287,15 @@ class MqttBridge:
                 add("sensor", f"{o}_anlaeufe", "Anläufe", dev, s["start_stop"], state_class="total_increasing",
                     entity_category="diagnostic", icon="mdi:restart")
             usage = next((pt["usage"] for pt in d["partitions"] if pt.get("usage")), None)
+            gb = dict(unit_of_measurement="GB", device_class="data_size", state_class="measurement",
+                      suggested_display_precision=1)
+            add("sensor", f"{o}_groesse", "Größe", dev, round((usage or {}).get("total", d["size"]) / 1e9, 2), **gb)
             if usage:
-                add("sensor", f"{o}_belegt", "Belegt", dev, round(100 * usage["used"] / usage["total"], 1),
+                used = usage["total"] - usage["free"]
+                add("sensor", f"{o}_belegt", "Belegt", dev, round(100 * used / usage["total"], 1),
                     unit_of_measurement="%", state_class="measurement", icon="mdi:chart-donut")
+                add("sensor", f"{o}_frei", "Frei", dev, round(usage["free"] / 1e9, 2), **gb)
+                add("sensor", f"{o}_belegt_gb", "Belegt (Speicher)", dev, round(used / 1e9, 2), **gb)
             failed = any(u == pt["uuid"] for (_, u) in app.health.failed for pt in d["partitions"])
             add("binary_sensor", f"{o}_problem", "Problem", dev,
                 "ON" if (failed or s.get("state") in ("warnung", "fehler") or

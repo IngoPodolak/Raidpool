@@ -1,4 +1,4 @@
-# HA RAIDPool
+# RAIDPool
 
 NAS-Add-on für Home Assistant: Festplatten-Pool wie StableBit DrivePool mit Duplizierung pro
 Ordner, Übernahme bestehender DrivePool-Platten (NTFS), SMART-Überwachung, Sensoren und
@@ -10,7 +10,7 @@ Geplant: SMB-Freigaben mit Benutzerverwaltung, SSD-Cache, RAID-Modi, Duplikatsuc
 
 1. Home Assistant → Einstellungen → Add-ons → Add-on Store → ⋮ → Repositories
 2. `https://github.com/IngoPodolak/raidpool` hinzufügen
-3. „HA RAIDPool“ installieren und starten
+3. „RAIDPool“ installieren und starten
 
 Unterstützt: amd64 und aarch64 (ARM).
 

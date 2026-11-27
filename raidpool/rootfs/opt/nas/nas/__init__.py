@@ -1,1 +1,1 @@
-"""HA RAIDPool – Home Assistant Add-on."""
+"""RAIDPool – Home Assistant Add-on."""

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.0
+- Name überall nur noch **RAIDPool** (auch MQTT-Gerät, Seitenleiste, Meldungen)
+- Neue Entitäten: **Größe, Frei, Belegt (GB)** je Platte; je Pool zusätzlich Belegt (GB),
+  Duplizierte Kopien und Sonstiges – passend für Tortendiagramme
+- Weboberfläche: **Tortendiagramme** für Pools (Daten/Duplikate/Sonstiges/Frei) und Platten (Belegt/Frei)
+- **Dashboard „RAIDPool“ in HA erzeugen** (Knopf in der Übersicht): Tortendiagramme mit apexcharts-card
+  und Bubble Cards (Füllstand als Slider, Schalter, Tasten) für alle Pools und Platten
+
 ## 0.9.0
 - **Integration in Home Assistant über MQTT-Discovery** – kommt automatisch mit dem Add-on, sobald
   der Mosquitto-Broker läuft. Geräte für Add-on, jeden Pool und jede Platte mit Sensoren,
