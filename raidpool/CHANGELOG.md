@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.2
+- Echtzeit über Samba funktionierte nicht (/dev/log ist im Container schreibgeschützt). Die Meldungen
+  kommen jetzt direkt aus der Samba-Ausgabe; im Log erscheinen sie nicht.
+- Duplikatsuche erstellt die Pool-Dateiliste nur neu, wenn sie älter als 6 Stunden ist, und zeigt dabei
+  den Fortschritt. Ein gleichzeitiger zweiter Scan desselben Pools wird verhindert (zählte Kopien doppelt).
+
 ## 0.13.1
 - **Keine Fehlalarme „Platte ausgefallen“ mehr bei Last:** Antwortet eine Platte nur langsam (z. B. Scan
   und Downloads gleichzeitig), ist das Gerät aber vorhanden, wird sie bis zu 5 Minuten beobachtet statt

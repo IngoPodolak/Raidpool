@@ -1,13 +1,12 @@
 """Echtzeit-Erkennung über Samba: das VFS-Modul full_audit meldet jede geschlossene, umbenannte oder
-gelöschte Datei per syslog. RAIDPool lauscht dafür selbst auf /dev/log (im Container gibt es keinen
-anderen syslog-Dienst). Das funktioniert unabhängig von der Ordnerzahl und vom inotify-Kontingent."""
+gelöschte Datei in der Samba-Ausgabe (smb.py reicht diese Zeilen an feed() weiter). Das funktioniert
+unabhängig von der Ordnerzahl und vom inotify-Kontingent."""
 import logging
 import os
-import socket
+import queue
 import threading
 
 log = logging.getLogger("nas")
-SOCK = "/dev/log"
 TAG = "RAIDPOOL|"
 
 
@@ -19,27 +18,20 @@ class AuditListener:
         self.events = 0
 
     def start(self):
-        try:
-            if os.path.exists(SOCK) or os.path.islink(SOCK):
-                os.remove(SOCK)
-            self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-            self.sock.bind(SOCK)
-            os.chmod(SOCK, 0o666)
-        except OSError as err:
-            self.error = f"Samba-Meldungen nicht verfügbar: {err}"
-            log.warning(self.error)
-            return
-        self.active = True
+        # Verarbeitung in eigenem Thread: die Samba-Ausgabe darf nie warten müssen, sonst stockt Samba
+        self.q = queue.SimpleQueue()
         threading.Thread(target=self._loop, daemon=True, name="smb-audit").start()
+        self.active = True
+
+    def feed(self, line):
+        if self.active:
+            self.q.put(line)
 
     def _loop(self):
         while True:
+            line = self.q.get()
             try:
-                data = self.sock.recv(65536)
-            except OSError:
-                continue
-            try:
-                self._parse(data.decode("utf-8", "surrogateescape"))
+                self._parse(line)
             except Exception:  # noqa: BLE001
                 log.debug("Audit-Meldung nicht verarbeitet", exc_info=True)
 

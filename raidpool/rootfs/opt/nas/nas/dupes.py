@@ -310,8 +310,15 @@ class DupeFinder:
                 for pool in list(self.settings.data["pools"]):
                     if self.cancel.is_set():
                         raise InterruptedError
-                    branches = [(u, b) for u, b, ok in self.pools.branches(pool) if ok]
-                    self.index.scan(pool, branches)
+                    # Pool-Dateiliste nur neu erstellen, wenn sie älter als 6 h ist – die Duplizierung hält
+                    # sie laufend aktuell. Läuft gerade ein Scan (z. B. Abgleich), wird darauf gewartet.
+                    info = self.index.scan_info(pool["id"]) or {}
+                    fresh = info.get("status") == "fertig" and time.time() - (info.get("finished") or 0) < 6 * 3600
+                    if info.get("status") == "läuft" or not fresh:
+                        p["phase"] = f"Dateiliste {pool['name']} aktualisieren"
+                        branches = [(u, b) for u, b, ok in self.pools.branches(pool) if ok]
+                        self.index.scan(pool, branches)
+                p["phase"] = "Index aktualisieren"
                 for src in self.sources():
                     if self.cancel.is_set():
                         raise InterruptedError
@@ -701,6 +708,10 @@ class DupeFinder:
 
     def status(self):
         p = dict(self.progress)
+        if p.get("running") and str(p.get("phase", "")).startswith("Dateiliste"):
+            prog = [x for x in self.index.progress.values() if x.get("running")]
+            if prog:
+                p["phase"] += f" – {sum(x['files'] for x in prog):,} Dateien erfasst".replace(",", ".")
         return {"progress": p, "last": self.last_run(), "summary": self.summary(), "config": self.cfg(),
                 "idle": {"cpu": round(self.idle.cpu, 1), "io_mb_s": round(self.idle.io, 2),
                          "idle_for": int(self.idle.idle_for())},

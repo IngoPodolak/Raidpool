@@ -40,10 +40,10 @@ ACCESS = ("none", "ro", "rw")
 
 
 # ---------------------------------------------------------------- HA-Benutzer (WebSocket, ohne Zusatzpakete)
-# Samba meldet jede geschlossene/umbenannte/gelöschte Datei per syslog an RAIDPool (audit.py)
+# Samba meldet jede geschlossene/umbenannte/gelöschte Datei über seine Ausgabe an RAIDPool (audit.py)
 AUDIT_LINES = ["   full_audit:prefix = RAIDPOOL|%P", "   full_audit:success = close renameat unlinkat",
                "   full_audit:failure = none", "   full_audit:facility = LOCAL5",
-               "   full_audit:priority = NOTICE", "   full_audit:syslog = true"]
+               "   full_audit:priority = NOTICE", "   full_audit:syslog = false"]
 
 
 def _ws_frame(payload):
@@ -136,6 +136,7 @@ class SambaManager:
         self.settings = settings
         self.pools = pools
         self.proc = None
+        self.audit = None        # AuditListener: bekommt die full_audit-Zeilen aus der Samba-Ausgabe
         self.wsdd = None
         self.error = None
         self.lock = threading.RLock()
@@ -677,6 +678,30 @@ class SambaManager:
             lines.append("")
         return "\n".join(lines)
 
+    def _pump(self, proc):
+        """Samba-Ausgabe ins Add-on-Log weiterreichen; Änderungsmeldungen (full_audit) an RAIDPool
+        geben statt sie zu protokollieren (sonst stünde jede Datei im Log)."""
+        import sys  # noqa: PLC0415
+        header = None
+        for raw in proc.stdout:
+            line = raw.decode("utf-8", "surrogateescape")
+            if "RAIDPOOL|" in line:
+                header = None
+                if self.audit:
+                    self.audit.feed(line)
+                continue
+            if line.startswith("[") and ".c:" in line:
+                # Kopfzeile von Samba – erst ausgeben, wenn klar ist, dass keine Audit-Zeile folgt
+                if header:
+                    sys.stdout.write(header)
+                header = line
+                continue
+            if header:
+                sys.stdout.write(header)
+                header = None
+            sys.stdout.write(line)
+            sys.stdout.flush()
+
     def write_usermap(self):
         rows = []
         for u in self.users():
@@ -736,7 +761,8 @@ class SambaManager:
                 log.error(self.error)
                 return
             self.proc = subprocess.Popen(["smbd", "--foreground", "--no-process-group", "--debug-stdout",
-                                          "-s", CONF], stdout=None, stderr=None)
+                                          "-s", CONF], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            threading.Thread(target=self._pump, args=(self.proc,), daemon=True, name="smbd-log").start()
             self.error = None
             log.info("Samba gestartet (PID %s)", self.proc.pid)
             if self.cfg()["netbios"] or self.cfg()["aliases"]:

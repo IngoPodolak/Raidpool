@@ -59,12 +59,25 @@ class Index:
     def __init__(self):
         self.lock = threading.Lock()
         self._quick = {}
+        self.scan_locks = {}
         self.db = connect()
         self.progress = {}   # pool -> laufender Scan-Status
 
     # ------------------------------------------------------------ Scan
     def scan(self, pool, branches):
         """branches: Liste (disk_uuid, pfad). Läuft im Hintergrund-Thread."""
+        pid = pool["id"]
+        lock = self.scan_locks.setdefault(pid, threading.Lock())
+        if not lock.acquire(blocking=False):
+            # Es läuft schon ein Scan dieses Pools: abwarten statt parallel zu scannen (würde Kopien doppelt zählen)
+            with lock:
+                return
+        try:
+            self._scan(pool, branches)
+        finally:
+            lock.release()
+
+    def _scan(self, pool, branches):
         pid = pool["id"]
         prog = {"running": True, "started": int(time.time()), "files": 0, "bytes": 0,
                 "disk": None, "disks_done": 0, "disks_total": len(branches), "error": None}

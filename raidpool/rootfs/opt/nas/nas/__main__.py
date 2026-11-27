@@ -27,7 +27,7 @@ from .smb import SambaManager
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 INGRESS_IP = "172.30.32.2"
-VERSION = "0.13.1"
+VERSION = "0.13.2"
 
 log = logging.getLogger("nas")
 
@@ -97,7 +97,8 @@ class App:
         self.power.apply_all()
         try:
             self.smb.apply_ips()
-            self.audit.start()       # vor Samba, damit /dev/log bereitsteht
+            self.audit.start()
+            self.smb.audit = self.audit
             self.smb.start()
         except Exception as err:  # noqa: BLE001
             self.smb.error = str(err)
