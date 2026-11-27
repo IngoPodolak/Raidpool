@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.1
+- **Wichtig:** Die Echtzeit-Überwachung belegt nicht mehr das gesamte inotify-Kontingent des Systems.
+  Vorher konnten dadurch u. a. Netzwerkspeicher (Backup-Ziel) in Home Assistant nicht eingehängt werden
+  („No space left on device“). Jetzt höchstens ein Drittel, Rest per regelmäßigem Abgleich.
+- Samba: Log-Meldungen „idmap range not specified“ und „usershares … Permission denied“ abgestellt.
+
 ## 0.12.0
 - **SSD-Cache pro Pool**: neue Dateien landen zuerst auf der SSD und werden vom Mover auf die Platten
   verschoben (nach Alter, ab Füllstand und täglich zur eingestellten Uhrzeit), dort dupliziert.

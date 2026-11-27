@@ -109,6 +109,7 @@ class Replicator:
         self.watch = {"active": False, "dirs": 0, "error": None}
         self.dirty_pools = set()
         self.ino = None
+        self.watch_budget = 0
         self.paused_reason = None       # z. B. „USV im Batteriebetrieb“
 
     # ------------------------------------------------------------ Einstellungen
@@ -408,6 +409,11 @@ class Replicator:
             full = os.path.join(branch, rd) if rd else branch
             if rd and _ignored(rd):
                 continue
+            if self.watch["dirs"] >= self.watch_budget:
+                # Nie das gesamte inotify-Kontingent belegen: Home Assistant/systemd brauchen es auch
+                self.watch["error"] = (f"Echtzeit-Überwachung auf {self.watch_budget} Ordner begrenzt – weitere "
+                                       "Änderungen werden beim regelmäßigen Abgleich erkannt")
+                return
             try:
                 self.ino.add(full, (pid, uuid, branch, rd))
                 self.watch["dirs"] += 1
@@ -435,7 +441,7 @@ class Replicator:
                 self.stop.wait(10)
                 continue
             try:
-                self._raise_watch_limit()
+                self.watch_budget = self._watch_budget()
                 self.ino = Inotify()
                 self.watch.update(active=True, dirs=0, error=None)
                 for pool in list(self.settings.data["pools"]):
@@ -494,15 +500,23 @@ class Replicator:
             self.enqueue(pid, rel, None)
 
     @staticmethod
-    def _raise_watch_limit():
+    def _watch_budget():
+        """Wie viele Ordner höchstens überwacht werden. Das inotify-Kontingent teilt sich das Add-on mit
+        dem Host (systemd, Netzwerkspeicher, andere Apps) – ist es aufgebraucht, schlagen dort z. B.
+        Mounts fehl. Daher Limit möglichst anheben und höchstens ein Drittel davon nutzen."""
+        path = "/proc/sys/fs/inotify/max_user_watches"
+        cur = 8192
         try:
-            with open("/proc/sys/fs/inotify/max_user_watches", encoding="utf-8") as fh:
+            with open(path, encoding="utf-8") as fh:
                 cur = int(fh.read().strip())
             if cur < 1048576:
-                with open("/proc/sys/fs/inotify/max_user_watches", "w", encoding="utf-8") as fh:
+                with open(path, "w", encoding="utf-8") as fh:
                     fh.write("1048576")
-        except OSError:
+                with open(path, encoding="utf-8") as fh:
+                    cur = int(fh.read().strip())
+        except (OSError, ValueError):
             pass
+        return max(0, min(cur // 3, cur - 65536, 400000))
 
     # ------------------------------------------------------------ Aufträge (Abgleich, Balance, Entfernen)
     def start_job(self, kind, **kw):
