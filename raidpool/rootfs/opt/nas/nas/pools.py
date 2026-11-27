@@ -331,7 +331,7 @@ class PoolManager:
                 "usage": u,
                 "smart_state": None,
             })
-        root = self.index.folder(pool["id"], "") or {}
+        root = self.index.folder_quick(pool["id"], "") or {}
         stored = root.get("stored") or 0
         return {
             **pool,

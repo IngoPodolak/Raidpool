@@ -58,6 +58,7 @@ class Index:
 
     def __init__(self):
         self.lock = threading.Lock()
+        self._quick = {}
         self.db = connect()
         self.progress = {}   # pool -> laufender Scan-Status
 
@@ -193,6 +194,17 @@ class Index:
             r = self.db.execute("SELECT * FROM folders WHERE pool=? AND path=?", (pid, path)).fetchone()
         return dict(r) if r else None
 
+    def folder_quick(self, pid, path=""):
+        """Wie folder(), wartet aber höchstens kurz – während Scans/Abgleichen bleibt die Oberfläche bedienbar."""
+        key = (pid, path)
+        if self.lock.acquire(timeout=1.5):
+            try:
+                r = self.db.execute("SELECT * FROM folders WHERE pool=? AND path=?", (pid, path)).fetchone()
+            finally:
+                self.lock.release()
+            self._quick[key] = dict(r) if r else None
+        return self._quick.get(key)
+
     def children(self, pid, path):
         with self.lock:
             rows = self.db.execute("SELECT * FROM folders WHERE pool=? AND parent=? ORDER BY name COLLATE NOCASE",
@@ -242,9 +254,13 @@ class Index:
         prog = self.progress.get(pid)
         if prog and prog["running"]:
             return dict(prog, status="läuft")
-        with self.lock:
-            r = self.db.execute("SELECT * FROM scans WHERE pool=?", (pid,)).fetchone()
-        return dict(r) if r else None
+        if self.lock.acquire(timeout=1.5):
+            try:
+                r = self.db.execute("SELECT * FROM scans WHERE pool=?", (pid,)).fetchone()
+            finally:
+                self.lock.release()
+            self._quick[("scan", pid)] = dict(r) if r else None
+        return self._quick.get(("scan", pid))
 
     def suggest_targets(self, pid):
         """Erkannte DrivePool-Duplizierung in minimale Soll-Einstellungen umrechnen."""

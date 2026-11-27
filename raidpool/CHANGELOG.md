@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.4
+- Weboberfläche bleibt während eines laufenden Scans/Abgleichs bedienbar (zeigt kurz die letzten Werte),
+  statt bis zum Ende zu warten und nicht zu laden.
+
 ## 0.12.3
 - **Echtzeit-Duplizierung für große Pools:** neue und geänderte Dateien werden jetzt per fanotify für die
   ganze Platte erkannt – unabhängig von der Anzahl der Ordner. Vorher stand bei großen Pools
