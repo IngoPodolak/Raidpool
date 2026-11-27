@@ -18,6 +18,9 @@ RUN apt-get update \
         samba-common-bin \
         samba-vfs-modules \
         procps \
+        smbclient \
+        iproute2 \
+        iputils-arping \
         attr \
         smartmontools \
         util-linux \

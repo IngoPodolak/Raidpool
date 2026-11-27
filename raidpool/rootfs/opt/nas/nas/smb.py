@@ -11,6 +11,7 @@ import re
 import socket
 import struct
 import subprocess
+import tempfile
 import threading
 import time
 import uuid as uuidlib
@@ -28,7 +29,11 @@ USER_RE = re.compile(r"^[a-z_][a-z0-9_.-]{0,31}$")
 SHARE_RE = re.compile(r'^[^\\/:*?"<>|\[\];=,+]{1,64}$')
 
 DEFAULT_SMB = {"enabled": True, "workgroup": "WORKGROUP", "server_name": "", "wsdd": True,
-               "netbios": False, "min_protocol": "SMB2_10"}
+               "netbios": False, "min_protocol": "SMB2_10",
+               "aliases": [],          # weitere Servernamen, z. B. „SERVER“ (alter Windows-Server)
+               "extra_ips": []}        # weitere IP-Adressen, z. B. die alte IP des Windows-Servers
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,14}$")
+IP_RE = re.compile(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(/(\d{1,2}))?$")
 ACCESS = ("none", "ro", "rw")
 
 
@@ -111,6 +116,7 @@ class SambaManager:
         self.lock = threading.RLock()
         self.stop_evt = threading.Event()
         self.restarts = 0
+        self.ip_state = {}     # ip -> {"active": bool, "error": str}
 
     # ------------------------------------------------------------ Daten
     def cfg(self):
@@ -128,14 +134,105 @@ class SambaManager:
         return (self.cfg()["server_name"] or socket.gethostname().split(".")[0] or "homeassistant")[:15]
 
     def set_cfg(self, values):
+        if "aliases" in values:
+            al = []
+            for a in values["aliases"]:
+                a = a.strip().upper()
+                if not a:
+                    continue
+                if not NAME_RE.match(a):
+                    raise ValueError(f"Ungültiger Servername '{a}' (max. 15 Zeichen, Buchstaben/Ziffern/-)")
+                if a not in al and a != self.server_name().upper():
+                    al.append(a)
+            values["aliases"] = al
+        if "extra_ips" in values:
+            ips = []
+            for ip in values["extra_ips"]:
+                ip = ip.strip()
+                m = IP_RE.match(ip)
+                if not m or any(int(x) > 255 for x in m.group(1, 2, 3, 4)) or (m.group(6) and int(m.group(6)) > 32):
+                    raise ValueError(f"Ungültige IP-Adresse '{ip}' (z. B. 192.168.0.10 oder 192.168.0.10/24)")
+                if ip not in ips:
+                    ips.append(ip)
+            values["extra_ips"] = ips
+        old_ips = set(self.cfg()["extra_ips"])
         with self.settings.lock:
             cur = self.settings.data.setdefault("smb", {})
             for k in DEFAULT_SMB:
                 if k in values:
                     cur[k] = values[k]
             self.settings.save()
+        for ip in old_ips - set(self.cfg()["extra_ips"]):
+            self.remove_ip(ip)
+        self.apply_ips()
         self.apply(restart=True)
         return self.cfg()
+
+    # ------------------------------------------------------------ Namen im Netzwerk
+    @staticmethod
+    def own_ips():
+        code, out, _ = run(["ip", "-4", "-o", "addr", "show"], timeout=10)
+        return {line.split()[3].split("/")[0] for line in out.splitlines() if len(line.split()) > 3} if code == 0 else set()
+
+    def check_name(self, name):
+        """Antwortet im Netzwerk schon jemand anderes auf diesen NetBIOS-Namen? -> Liste fremder IPs."""
+        if config.DEV:
+            return ["192.168.0.10"] if name.upper() == "BELEGT" else []
+        code, out, _ = run(["nmblookup", name], timeout=15)
+        ips = set(re.findall(r"^(\d+\.\d+\.\d+\.\d+)\s+\S+<00>", out, re.M))
+        return sorted(ips - self.own_ips())
+
+    # ------------------------------------------------------------ Zusätzliche IP-Adressen
+    @staticmethod
+    def default_iface():
+        code, out, _ = run(["ip", "-4", "route", "show", "default"], timeout=10)
+        m = re.search(r"\bdev\s+(\S+)", out)
+        return m.group(1) if m else None
+
+    @staticmethod
+    def _prefix_of(iface):
+        code, out, _ = run(["ip", "-4", "-o", "addr", "show", "dev", iface], timeout=10)
+        m = re.search(r"inet\s+\S+/(\d+)", out)
+        return m.group(1) if m else "24"
+
+    def apply_ips(self):
+        if config.DEV:
+            for ip in self.cfg()["extra_ips"]:
+                self.ip_state[ip] = {"active": True, "error": None, "iface": "eth0"}
+            return
+        iface = self.default_iface()
+        for ip in self.cfg()["extra_ips"]:
+            st = self.ip_state.setdefault(ip, {"active": False, "error": None})
+            if not iface:
+                st["error"] = "Keine Netzwerkschnittstelle gefunden"
+                continue
+            addr = ip.split("/")[0]
+            if addr in self.own_ips():
+                st.update(active=True, error=None, iface=iface)
+                continue
+            # Ist die Adresse schon von einem anderen Gerät belegt (z. B. alte Windows-VM noch an)?
+            code, _, _ = run(["arping", "-D", "-c", "2", "-w", "3", "-I", iface, addr], timeout=10)
+            if code == 1:
+                st.update(active=False, error="Adresse wird von einem anderen Gerät verwendet – alter Server noch an?")
+                continue
+            cidr = ip if "/" in ip else f"{ip}/{self._prefix_of(iface)}"
+            code, _, err = run(["ip", "addr", "add", cidr, "dev", iface, "label", f"{iface}:rp"[:15]], timeout=10)
+            if code != 0 and "File exists" not in err:
+                st.update(active=False, error=err.strip() or "Hinzufügen fehlgeschlagen")
+                continue
+            run(["arping", "-U", "-c", "2", "-I", iface, addr], timeout=10)   # Geräte über neue Adresse informieren
+            st.update(active=True, error=None, iface=iface, cidr=cidr)
+            log.info("Zusätzliche IP %s auf %s aktiv", cidr, iface)
+
+    def remove_ip(self, ip):
+        st = self.ip_state.pop(ip, None)
+        if config.DEV or not st or not st.get("cidr"):
+            return
+        run(["ip", "addr", "del", st["cidr"], "dev", st.get("iface") or self.default_iface() or "eth0"], timeout=10)
+
+    def remove_all_ips(self):
+        for ip in list(self.ip_state):
+            self.remove_ip(ip)
 
     # ------------------------------------------------------------ Benutzer
     def _unix_user(self, name):
@@ -144,7 +241,33 @@ class SambaManager:
         if run(["id", "-u", name])[0] != 0:
             run(["useradd", "-M", "-N", "-s", "/usr/sbin/nologin", name], check=True)
 
-    def add_user(self, name, password, ha=False, display=""):
+    def _check_logins(self, name, logins):
+        clean = []
+        taken = {u["name"].lower() for u in self.users() if u["name"] != name}
+        for u in self.users():
+            if u["name"] != name:
+                taken |= {x.lower() for x in u.get("logins") or []}
+        for x in logins or []:
+            x = x.strip()
+            if not x:
+                continue
+            if any(ch in x for ch in '"=\n'):
+                raise ValueError(f"Ungültiger Anmeldename '{x}'")
+            if x.lower() in taken:
+                raise ValueError(f"Anmeldename '{x}' wird schon von einem anderen Benutzer verwendet")
+            clean.append(x)
+        return clean
+
+    def set_logins(self, name, logins):
+        clean = self._check_logins(name, logins)
+        with self.settings.lock:
+            for u in self.users():
+                if u["name"] == name:
+                    u["logins"] = clean
+            self.settings.save()
+        self.apply()
+
+    def add_user(self, name, password, ha=False, display="", logins=None):
         name = (name or "").strip().lower()
         if not USER_RE.match(name):
             raise ValueError("Benutzername: Kleinbuchstaben, Ziffern, . _ - (max. 32 Zeichen)")
@@ -152,10 +275,11 @@ class SambaManager:
             raise ValueError("Benutzer existiert bereits")
         if not password or len(password) < 4:
             raise ValueError("Passwort mit mindestens 4 Zeichen angeben")
+        clean = self._check_logins(name, logins)
         self._set_password(name, password)
         with self.settings.lock:
             self.users().append({"name": name, "display": display or name, "ha": bool(ha),
-                                 "enabled": True, "created": int(time.time())})
+                                 "enabled": True, "created": int(time.time()), "logins": clean})
             self.settings.save()
         self.apply()
 
@@ -265,6 +389,86 @@ class SambaManager:
         base = self.pools.mountpoint({"id": s["pool"]})
         return os.path.join(base, s["path"]) if s["path"] else base
 
+    # ------------------------------------------------------------ Übernahme vom alten Server
+    def remote_shares(self, host, user, password):
+        """Freigaben (und wenn möglich deren Pfade) eines anderen SMB-Servers auslesen.
+        Zugangsdaten werden nur für diesen Abruf in einer temporären Datei verwendet und nicht gespeichert."""
+        host = host.strip().strip("\\/").split("\\")[0].split("/")[0]
+        if not re.match(r"^[A-Za-z0-9._-]+$", host):
+            raise ValueError("Ungültiger Servername")
+        if config.DEV:
+            shares = [{"name": "Filme", "comment": "Filmsammlung", "path": "P:\\Filme"},
+                      {"name": "Fotos", "comment": "", "path": "P:\\Fotos"},
+                      {"name": "Software", "comment": "", "path": "P:\\Software"},
+                      {"name": "Backup", "comment": "Sicherungen", "path": "D:\\Backup"},
+                      {"name": "Pool", "comment": "", "path": "P:\\"}]
+        else:
+            fd, auth = tempfile.mkstemp(prefix="raidpool-auth-")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    u = user or "guest"
+                    dom = ""
+                    if "\\" in u:
+                        dom, u = u.split("\\", 1)
+                    fh.write(f"username = {u}\npassword = {password or ''}\n")
+                    if dom:
+                        fh.write(f"domain = {dom}\n")
+                code, out, err = run(["smbclient", "-L", f"//{host}", "-A", auth, "-g", "-m", "SMB3"], timeout=30)
+                if code != 0:
+                    msg = (err or out).strip().splitlines()[-1] if (err or out).strip() else "Verbindung fehlgeschlagen"
+                    if "LOGON_FAILURE" in msg:
+                        msg = "Anmeldung fehlgeschlagen – Benutzername/Passwort prüfen"
+                    raise RuntimeError(msg)
+                shares = []
+                for line in out.splitlines():
+                    parts = line.split("|")
+                    if len(parts) >= 2 and parts[0] == "Disk" and not parts[1].endswith("$"):
+                        shares.append({"name": parts[1], "comment": parts[2] if len(parts) > 2 else "", "path": ""})
+                # Pfade sind nur mit Administratorrechten lesbar
+                code, out, _ = run(["rpcclient", "-A", auth, host, "-c", "netshareenumall"], timeout=30)
+                if code == 0:
+                    cur = None
+                    for line in out.splitlines():
+                        line = line.strip()
+                        if line.startswith("netname:"):
+                            cur = line.split(":", 1)[1].strip()
+                        elif line.startswith("path:") and cur:
+                            for sh in shares:
+                                if sh["name"].lower() == cur.lower():
+                                    sh["path"] = line.split(":", 1)[1].strip()
+            finally:
+                try:
+                    os.remove(auth)
+                except OSError:
+                    pass
+        existing = {s["name"].lower() for s in self.shares()}
+        pools = self.settings.data["pools"]
+        for sh in shares:
+            sh["exists"] = sh["name"].lower() in existing
+            # Laufwerksbuchstaben entfernen: „P:\Filme\HD“ -> „Filme/HD“
+            p = re.sub(r"^[A-Za-z]:", "", sh["path"] or "").replace("\\", "/").strip("/")
+            guess = p if sh["path"] else sh["name"]
+            sh["pool"], sh["target"], sh["found"] = (pools[0]["id"] if pools else None), guess, False
+            for pool in pools:
+                base = self.pools.mountpoint(pool)
+                if (guess == "" and pool) or os.path.isdir(os.path.join(base, guess)) or \
+                        self.pools.index.folder(pool["id"], guess):
+                    sh["pool"], sh["found"] = pool["id"], True
+                    break
+        return shares
+
+    def import_shares(self, items, access):
+        done, skipped = 0, []
+        for it in items:
+            if any(s["name"].lower() == it["name"].lower() for s in self.shares()):
+                skipped.append(it["name"])
+                continue
+            self.save_share({"name": it["name"], "pool": it["pool"], "path": it.get("target", ""),
+                             "comment": it.get("comment", ""), "access": dict(access or {}),
+                             "recycle": True, "browseable": True})
+            done += 1
+        return {"imported": done, "skipped": skipped}
+
     # ------------------------------------------------------------ smb.conf
     def render_conf(self):
         c = self.cfg()
@@ -288,7 +492,7 @@ class SambaManager:
             "   guest account = nobody",
             f"   server min protocol = {c['min_protocol']}",
             "   smb ports = 445",
-            f"   disable netbios = {'no' if c['netbios'] else 'yes'}",
+            f"   disable netbios = {'no' if c['netbios'] or c['aliases'] else 'yes'}",
             "   load printers = no",
             "   printing = bsd",
             "   printcap name = /dev/null",
@@ -301,8 +505,12 @@ class SambaManager:
             "   fruit:nfs_aces = no",
             "   fruit:copyfile = yes",
             "   fruit:model = MacSamba",
-            "",
         ]
+        if c["aliases"]:
+            lines.append(f"   netbios aliases = {' '.join(c['aliases'])}")
+        if any(u.get("logins") for u in self.users()):
+            lines.append(f"   username map = {SAMBA_DIR}/usermap")
+        lines.append("")
         for s in self.shares():
             if not s.get("enabled", True) or not self.settings.pool(s["pool"]):
                 continue
@@ -362,7 +570,18 @@ class SambaManager:
             lines.append("")
         return "\n".join(lines)
 
+    def write_usermap(self):
+        rows = []
+        for u in self.users():
+            logins = [x for x in u.get("logins") or [] if x]
+            if logins:
+                rows.append(f"{u['name']} = " + " ".join(f'"{x}"' if " " in x else x for x in logins))
+        os.makedirs(SAMBA_DIR, exist_ok=True)
+        with open(SAMBA_DIR + "/usermap", "w", encoding="utf-8") as fh:
+            fh.write("\n".join(rows) + ("\n" if rows else ""))
+
     def write_conf(self):
+        self.write_usermap()
         os.makedirs(SAMBA_DIR + "/private", exist_ok=True)
         os.makedirs(SAMBA_DIR + "/state", exist_ok=True)
         os.makedirs(SAMBA_DIR + "/cache", exist_ok=True)
@@ -413,7 +632,7 @@ class SambaManager:
                                           "-s", CONF], stdout=None, stderr=None)
             self.error = None
             log.info("Samba gestartet (PID %s)", self.proc.pid)
-            if self.cfg()["netbios"]:
+            if self.cfg()["netbios"] or self.cfg()["aliases"]:
                 subprocess.Popen(["nmbd", "--foreground", "--no-process-group", "--debug-stdout", "-s", CONF])
             if self.cfg()["wsdd"] and self.wsdd is None:
                 for exe in ("wsdd", "wsdd2"):
@@ -438,6 +657,10 @@ class SambaManager:
             self.wsdd = None
             run(["pkill", "-x", "nmbd"])
 
+    def shutdown(self):
+        self.stop()
+        self.remove_all_ips()
+
     def apply(self, restart=False):
         """Konfiguration schreiben und Samba neu laden (Verbindungen bleiben bestehen)."""
         self.write_conf()
@@ -454,6 +677,11 @@ class SambaManager:
 
     def watchdog_loop(self):
         while not self.stop_evt.wait(15):
+            if self.cfg()["extra_ips"] and self.cfg()["enabled"]:
+                try:
+                    self.apply_ips()      # z. B. nach Neuverbindung des Netzwerks erneut setzen
+                except Exception as err:  # noqa: BLE001
+                    log.warning("IP-Adressen: %s", err)
             if config.DEV or not self.cfg()["enabled"] or self.proc is None:
                 continue
             if self.proc.poll() is not None and self.restarts < 5:
@@ -492,4 +720,6 @@ class SambaManager:
                                                    path_ok=config.DEV or os.path.isdir(self.share_path(s)))
                                               for s in self.shares()],
             "sessions": self.sessions(),
+            "ips": [dict(self.ip_state.get(ip, {"active": False, "error": None}), ip=ip) for ip in c["extra_ips"]],
+            "own_ips": sorted(self.own_ips()) if not config.DEV else ["192.168.0.50"],
         }

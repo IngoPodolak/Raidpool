@@ -24,7 +24,7 @@ from .smb import SambaManager
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 INGRESS_IP = "172.30.32.2"
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 
 log = logging.getLogger("nas")
 
@@ -59,6 +59,7 @@ class App:
         self.pools.mount_all()
         self.power.apply_all()
         try:
+            self.smb.apply_ips()
             self.smb.start()
         except Exception as err:  # noqa: BLE001
             self.smb.error = str(err)
@@ -259,11 +260,20 @@ class App:
             if action == "share/remove":
                 self.smb.remove_share(body["id"])
             elif action == "user/add":
-                self.smb.add_user(body.get("name"), body.get("password"), body.get("ha", False), body.get("display", ""))
+                self.smb.add_user(body.get("name"), body.get("password"), body.get("ha", False), body.get("display", ""),
+                                  body.get("logins") or [])
             elif action == "user/password":
                 self.smb.set_password(body["name"], body.get("password"))
             elif action == "user/enabled":
                 self.smb.set_user_enabled(body["name"], body.get("enabled", True))
+            elif action == "user/logins":
+                self.smb.set_logins(body["name"], body.get("logins") or [])
+            elif action == "check_name":
+                return {"name": body["name"], "taken_by": self.smb.check_name(body["name"])}
+            elif action == "remote_shares":
+                return self.smb.remote_shares(body.get("host", ""), body.get("user", ""), body.get("password", ""))
+            elif action == "import":
+                return self.smb.import_shares(body.get("items") or [], body.get("access") or {})
             elif action == "user/remove":
                 self.smb.remove_user(body["name"])
             elif action == "start":
@@ -437,7 +447,7 @@ def main():
         app.smb.stop_evt.set()
         app.rep.stop.set()
         app.health.stop.set()
-        app.smb.stop()
+        app.smb.shutdown()
         threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGTERM, shutdown)

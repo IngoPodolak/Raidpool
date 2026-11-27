@@ -1,5 +1,5 @@
 name: HA RAIDPool
-version: "0.7.0"
+version: "0.8.0"
 slug: raidpool
 description: >-
   NAS mit Festplatten-Pool wie StableBit DrivePool (Duplizierung pro Ordner),
@@ -29,6 +29,8 @@ privileged:
   - SYS_RAWIO
   - SYS_MODULE
   - DAC_READ_SEARCH
+  - NET_ADMIN
+  - NET_RAW
 homeassistant_api: true
 hassio_api: true
 map:

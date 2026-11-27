@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0
+- **Weitere Servernamen**: HA ist zusätzlich z. B. als `\\SERVER` erreichbar (NetBIOS-Alias),
+  mit Prüfung, ob der Name im Netzwerk noch belegt ist.
+- **Zusätzliche IP-Adressen**: die alte IP des Windows-Servers übernehmen – mit Konfliktprüfung (ARP),
+  automatischem Wiederherstellen und Entfernen beim Stoppen.
+- **Weitere Anmeldenamen** pro Benutzer (z. B. die E-Mail-Adresse des Microsoft-Kontos), damit
+  gespeicherte Anmeldungen der Geräte weiter funktionieren.
+- **Freigaben vom alten Server übernehmen**: Namen, Beschreibung und (mit Adminrechten) Ordner werden
+  ausgelesen und dem Pool zugeordnet. Zugangsdaten werden nicht gespeichert.
+
 ## 0.7.0
 - **Plattenausfall im Betrieb** wird erkannt: Platte wird aus dem Pool gelöst (ohne Aushängen des
   Pools), Meldung in Home Assistant, fehlende Kopien werden sofort auf die übrigen Platten kopiert.

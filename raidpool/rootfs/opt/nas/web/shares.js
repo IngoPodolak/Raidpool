@@ -18,6 +18,8 @@ window.renderShares = async function () {
   el.innerHTML = `
   <div class="card hero" style="background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, var(--card)), var(--card) 70%)">
     <div><div class="big" style="font-size:26px">\\\\${esc(st.server_name)}</div>
+      ${c.aliases.length ? `<div class="small" style="margin-top:4px">auch erreichbar als ${c.aliases.map((a) => `<b class="mono">\\\\${esc(a)}</b>`).join(", ")}</div>` : ""}
+      ${(st.ips || []).length ? `<div class="small muted">zusätzliche IP: ${st.ips.map((i) => esc(i.ip) + (i.active ? " ✓" : " ⚠️")).join(", ")}</div>` : ""}
       <div class="muted small" style="margin-top:6px">SMB-Server ${stateBadge} · Arbeitsgruppe ${esc(c.workgroup)}</div></div>
     <div>
       <div class="stats" style="margin-top:0">
@@ -36,6 +38,7 @@ window.renderShares = async function () {
   ${st.read_only ? `<div class="banner warn" style="margin:0 0 16px"><b>Schreibschutz aktiv:</b> alle Freigaben sind nur lesbar, bis <code>read_only</code> ausgeschaltet wird.</div>` : ""}
 
   <div class="row spread"><h2>Freigaben</h2><div class="row">
+    <button class="btn" onclick="importDialog()">Vom alten Server übernehmen …</button>
     <button class="btn" onclick="newShare(true)">Ganzen Pool freigeben</button>
     <button class="btn primary" onclick="newShare(false)">+ Ordner freigeben</button></div></div>
   ${st.shares.length ? `<div class="grid">${st.shares.map(shareCard).join("")}</div>`
@@ -58,9 +61,19 @@ window.renderShares = async function () {
         ${[["SMB2_10", "SMB 2.1 (empfohlen)"], ["SMB3", "SMB 3 (sicherer, ältere Geräte gehen evtl. nicht)"], ["NT1", "SMB 1 (alt, unsicher – nur für sehr alte Geräte)"]]
           .map(([v, l]) => `<option value="${v}" ${c.min_protocol === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>
     </div>
+    <div class="field"><label>Weitere Servernamen <span class="muted small">(z. B. der Name des alten Windows-Servers – Geräte müssen nichts ändern)</span></label>
+      <div class="excl">${c.aliases.length ? c.aliases.map((a) => `<span class="chip">🖥️ \\\\${esc(a)}<button type="button" onclick='removeAlias(${js(a)})'>✕</button></span>`).join("") : '<span class="muted small">Keine</span>'}</div>
+      <div class="row"><input type="text" id="smb-alias" maxlength="15" placeholder="SERVER" style="text-transform:uppercase;max-width:200px">
+        <button type="button" class="btn" onclick="addAlias()">Hinzufügen</button></div></div>
+    <div class="field"><label>Zusätzliche IP-Adressen <span class="muted small">(z. B. die alte IP des Windows-Servers, falls Geräte \\\\192.168… nutzen)</span></label>
+      <div class="excl">${(st.ips || []).length ? st.ips.map((i) => `<span class="chip">${i.active ? "✅" : "⚠️"} ${esc(i.ip)}${i.error ? ` <span class="muted small">${esc(i.error)}</span>` : ""}
+        <button type="button" onclick='removeIp(${js(i.ip)})'>✕</button></span>`).join("") : '<span class="muted small">Keine</span>'}</div>
+      <div class="row"><input type="text" id="smb-ip" placeholder="192.168.0.10" style="max-width:200px">
+        <button type="button" class="btn" onclick="addIp()">Hinzufügen</button></div>
+      <span class="muted small">Eigene Adresse(n): ${esc((st.own_ips || []).join(", "))}. Die alte Adresse im Router für DHCP sperren, damit sie nicht neu vergeben wird.</span></div>
     <label class="row small"><input type="checkbox" id="smb-en" ${c.enabled ? "checked" : ""}> SMB-Server eingeschaltet</label>
     <label class="row small"><input type="checkbox" id="smb-wsdd" ${c.wsdd ? "checked" : ""}> In der Windows-Netzwerkumgebung anzeigen (WS-Discovery)</label>
-    <label class="row small"><input type="checkbox" id="smb-nb" ${c.netbios ? "checked" : ""}> NetBIOS (nur für sehr alte Geräte nötig)</label>
+    <label class="row small"><input type="checkbox" id="smb-nb" ${c.netbios ? "checked" : ""}> NetBIOS – Namensauflösung im Netzwerk (bei weiteren Servernamen automatisch an)</label>
     <div class="row spread" style="margin-top:10px"><a href="#" class="small" onclick="showConf();return false">Erzeugte smb.conf ansehen</a>
       <button class="btn primary" onclick="saveSmbCfg()">Speichern</button></div>
   </details>`;
@@ -96,8 +109,10 @@ function userRow(u) {
   return `<div class="row spread" style="padding:12px 16px;border-bottom:1px solid var(--line)">
     <div class="row"><div class="ficon" style="width:34px;height:34px;font-size:16px">👤</div>
       <div><b>${esc(u.display || u.name)}</b> <span class="muted small mono">${esc(u.name)}</span><br>
-      <span class="small muted">${u.ha ? '<span class="badge info">Home Assistant</span>' : '<span class="badge">nur SMB</span>'} · ${n} Freigaben${u.enabled === false ? ' · <span class="badge bad">gesperrt</span>' : ""}</span></div></div>
+      <span class="small muted">${u.ha ? '<span class="badge info">Home Assistant</span>' : '<span class="badge">nur SMB</span>'} · ${n} Freigaben${u.enabled === false ? ' · <span class="badge bad">gesperrt</span>' : ""}</span>
+      ${(u.logins || []).length ? `<br><span class="small muted">meldet sich auch an als: ${u.logins.map((x) => `<span class="mono">${esc(x)}</span>`).join(", ")}</span>` : ""}</div></div>
     <div class="row">
+      <button class="btn" onclick='loginsDialog(${js(u.name)})'>Anmeldenamen</button>
       <button class="btn" onclick='pwDialog(${js(u.name)})'>Passwort ändern</button>
       <button class="btn" onclick='act(()=>api("smb/user/enabled",{name:${js(u.name)},enabled:${u.enabled === false}}),"Gespeichert")'>${u.enabled === false ? "Entsperren" : "Sperren"}</button>
       <button class="btn danger" onclick='removeUser(${js(u.name)})'>Entfernen</button></div></div>`;
@@ -204,13 +219,16 @@ window.userDialog = (preset) => {
       <div class="field"><label>SMB-Passwort</label><input type="password" id="ud-pw" autocomplete="new-password" class="pw"></div>
       <div class="field"><label>Passwort wiederholen</label><input type="password" id="ud-pw2" autocomplete="new-password" class="pw"></div>
     </div>
+    <div class="field"><label>Weitere Anmeldenamen <span class="muted small">(optional, durch Komma getrennt – z. B. die E-Mail-Adresse, mit der sich Geräte am alten Windows-Server anmelden)</span></label>
+      <input type="text" id="ud-logins" value="${esc((p.logins || []).join(", "))}" placeholder="name@beispiel.de"></div>
     <p class="muted small">${p.ha ? "Home Assistant gibt sein Passwort nicht heraus – für Freigaben wird deshalb ein eigenes Passwort vergeben. Es darf gleich sein." : "Für Geräte ohne Home-Assistant-Konto, z. B. Fernseher oder Mediaplayer."}</p>
     <div class="row" style="justify-content:flex-end"><button type="button" class="btn" onclick="$('#dlg').close()">Abbrechen</button>
       <button type="button" class="btn primary" id="ud-ok">Anlegen</button></div>`;
   $("#ud-ok").onclick = async () => {
     if ($("#ud-pw").value !== $("#ud-pw2").value) { toast("Passwörter stimmen nicht überein"); return; }
     try {
-      await api("smb/user/add", { name: $("#ud-name").value, display: $("#ud-display").value, password: $("#ud-pw").value, ha: !!p.ha });
+      await api("smb/user/add", { name: $("#ud-name").value, display: $("#ud-display").value, password: $("#ud-pw").value, ha: !!p.ha,
+        logins: $("#ud-logins").value.split(",").map((x) => x.trim()).filter(Boolean) });
       $("#dlg").close(); toast("Benutzer angelegt"); refresh();
     } catch (e) { toast("Fehler: " + e.message); }
   };
@@ -243,3 +261,91 @@ window.importHaUsers = async () => {
   }));
   $("#dlg").showModal();
 };
+
+// ---------------------------------------------------------------- Servernamen, IP-Adressen, Anmeldenamen
+window.addAlias = async () => {
+  const name = $("#smb-alias").value.trim().toUpperCase();
+  if (!name) return;
+  try {
+    const r = await api("smb/check_name", { name });
+    if (r.taken_by.length && !confirm(`Der Name ${name} wird im Netzwerk noch von ${r.taken_by.join(", ")} verwendet (alter Server noch an?).\n\nTrotzdem hinzufügen? Es gibt dann einen Namenskonflikt, bis das andere Gerät aus ist.`)) return;
+    await api("smb/config", { aliases: sh.st.config.aliases.concat([name]) });
+    toast(`Auch erreichbar als \\\\${name}`);
+  } catch (e) { toast("Fehler: " + e.message); }
+  refresh();
+};
+window.removeAlias = (a) => act(() => api("smb/config", { aliases: sh.st.config.aliases.filter((x) => x !== a) }), "Name entfernt");
+window.addIp = async () => {
+  const ip = $("#smb-ip").value.trim();
+  if (!ip) return;
+  if (!confirm(`Home Assistant zusätzlich unter ${ip} erreichbar machen?\n\nDie Adresse darf von keinem anderen Gerät mehr benutzt werden – also erst, wenn der alte Server aus ist. Das wird vorher geprüft.`)) return;
+  await act(() => api("smb/config", { extra_ips: sh.st.config.extra_ips.concat([ip]) }), "IP-Adresse hinzugefügt");
+};
+window.removeIp = (ip) => act(() => api("smb/config", { extra_ips: sh.st.config.extra_ips.filter((x) => x !== ip) }), "IP-Adresse entfernt");
+window.loginsDialog = (name) => {
+  const u = sh.st.users.find((x) => x.name === name) || {};
+  $("#dlg-body").innerHTML = `<h2>Anmeldenamen für ${esc(u.display || name)}</h2>
+    <p class="muted small">Unter diesen Namen kann sich ${esc(u.display || name)} zusätzlich anmelden – mit demselben SMB-Passwort.
+    Praktisch, wenn Geräte die Anmeldung vom alten Windows-Server gespeichert haben (oft die E-Mail-Adresse des Microsoft-Kontos).</p>
+    <div class="field"><label>Weitere Anmeldenamen (durch Komma getrennt)</label><input type="text" id="lg-in" value="${esc((u.logins || []).join(", "))}"></div>
+    <div class="row" style="justify-content:flex-end"><button type="button" class="btn" onclick="$('#dlg').close()">Abbrechen</button>
+      <button type="button" class="btn primary" id="lg-ok">Speichern</button></div>`;
+  $("#lg-ok").onclick = () => { const logins = $("#lg-in").value.split(",").map((x) => x.trim()).filter(Boolean);
+    $("#dlg").close(); act(() => api("smb/user/logins", { name, logins }), "Gespeichert"); };
+  $("#dlg").showModal();
+};
+
+// ---------------------------------------------------------------- Übernahme vom alten Server
+window.importDialog = () => {
+  $("#dlg-body").innerHTML = `<h2>Freigaben vom alten Server übernehmen</h2>
+    <p class="muted small">Liest die Freigaben (Namen, Beschreibung und – mit Administratorrechten – den Ordner) des alten Windows-Servers aus.
+    Die Zugangsdaten werden nur für diesen Abruf verwendet und nicht gespeichert.</p>
+    <div class="settings-grid">
+      <div class="field"><label>Server (Name oder IP)</label><input type="text" id="im-host" placeholder="SERVER"></div>
+      <div class="field"><label>Benutzer</label><input type="text" id="im-user" autocomplete="off" placeholder="name@beispiel.de"></div>
+      <div class="field"><label>Passwort</label><input type="password" id="im-pw" class="pw" autocomplete="new-password"></div>
+    </div>
+    <div class="row" style="justify-content:flex-end;margin-top:10px"><button type="button" class="btn" onclick="$('#dlg').close()">Abbrechen</button>
+      <button type="button" class="btn primary" id="im-load">Freigaben lesen</button></div>`;
+  $("#im-load").onclick = async () => {
+    const btn = $("#im-load"); btn.disabled = true; btn.textContent = "Verbinde …";
+    try {
+      const list = await api("smb/remote_shares", { host: $("#im-host").value, user: $("#im-user").value, password: $("#im-pw").value });
+      $("#im-pw").value = "";
+      importPick(list);
+    } catch (e) { btn.disabled = false; btn.textContent = "Erneut versuchen"; toast("Fehler: " + e.message); }
+  };
+  $("#dlg").showModal();
+};
+function importPick(list) {
+  const pools = state.status.pools;
+  const users = sh.st.users;
+  $("#dlg-body").innerHTML = `<h2>Freigaben übernehmen</h2>
+    <p class="muted small">Prüfe für jede Freigabe den Ordner im Pool. Grün = Ordner im Pool gefunden. Der Laufwerksbuchstabe des alten Servers wird entfernt.</p>
+    <div class="picker">${list.map((s, i) => `<div class="picker-row" style="grid-template-columns:auto 1fr;cursor:default;align-items:start">
+      <input type="checkbox" data-im="${i}" ${s.exists ? "disabled" : s.found ? "checked" : ""}>
+      <div><b>${esc(s.name)}</b> ${s.exists ? '<span class="badge">existiert schon</span>' : s.found ? '<span class="badge ok">Ordner gefunden</span>' : '<span class="badge warn">Ordner nicht gefunden</span>'}
+        <div class="muted small">${s.path ? "alt: " + esc(s.path) : "Pfad nicht lesbar (keine Administratorrechte) – Ordner nach Namen vermutet"}${s.comment ? " · " + esc(s.comment) : ""}</div>
+        <div class="row" style="margin-top:4px"><select data-pool="${i}" ${s.exists ? "disabled" : ""}>${pools.map((p) => `<option value="${esc(p.id)}" ${p.id === s.pool ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
+          <input type="text" data-target="${i}" value="${esc(s.target)}" placeholder="(ganzer Pool)" ${s.exists ? "disabled" : ""} style="flex:1;min-width:160px"></div></div></div>`).join("")}</div>
+    <div class="field" style="margin-top:10px"><label>Zugriff für die übernommenen Freigaben</label>
+      ${users.length ? users.map((u) => `<label class="row small"><input type="checkbox" data-u="${esc(u.name)}" checked> ${esc(u.display || u.name)} – lesen + schreiben</label>`).join("")
+        : '<span class="muted small">Noch keine Benutzer – Rechte danach pro Freigabe vergeben.</span>'}</div>
+    <div class="row" style="justify-content:flex-end;margin-top:10px"><button type="button" class="btn" onclick="$('#dlg').close()">Abbrechen</button>
+      <button type="button" class="btn primary" id="im-ok">Übernehmen</button></div>`;
+  $("#im-ok").onclick = async () => {
+    const items = [...document.querySelectorAll("[data-im]:checked")].map((x) => {
+      const i = +x.dataset.im;
+      return { name: list[i].name, comment: list[i].comment, pool: document.querySelector(`[data-pool="${i}"]`).value,
+        target: document.querySelector(`[data-target="${i}"]`).value.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") };
+    });
+    const access = {};
+    document.querySelectorAll("[data-u]:checked").forEach((x) => (access[x.dataset.u] = "rw"));
+    try {
+      const r = await api("smb/import", { items, access });
+      $("#dlg").close();
+      toast(`${r.imported} Freigaben übernommen` + (r.skipped.length ? `, ${r.skipped.length} übersprungen` : ""));
+    } catch (e) { toast("Fehler: " + e.message); }
+    refresh();
+  };
+}

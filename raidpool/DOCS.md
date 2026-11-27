@@ -84,6 +84,19 @@ anbieten, z. B. `\\homeassistant\DrivePool` und zusätzlich `\\homeassistant\Fil
   Ist es aktiv, zeigt der Reiter einen Hinweis; dort stoppen und hier „Starten“.
 - Mit `read_only: true` sind alle Freigaben nur lesbar.
 
+### Umzug vom Windows-Server (gleiche Adressen behalten)
+
+1. Windows-Server/VM **ausschalten** (Name und IP dürfen nicht doppelt im Netz sein).
+2. Freigaben → **Vom alten Server übernehmen …** (vorher, solange er noch läuft) – oder Freigaben
+   gleich benennen wie bisher.
+3. Server-Einstellungen → **Weitere Servernamen**: alten Namen eintragen, z. B. `SERVER`.
+4. Falls Geräte die IP nutzen: **Zusätzliche IP-Adresse** = alte IP des Servers; die Adresse im
+   Router für DHCP sperren.
+5. Benutzer mit **gleichem Passwort** anlegen und unter „Anmeldenamen“ den bisherigen Login
+   eintragen (z. B. die E-Mail-Adresse des Microsoft-Kontos).
+
+Am zuverlässigsten ist zusätzlich ein DNS-Eintrag im Router (`SERVER` → IP von Home Assistant).
+
 ## Duplikate
 
 Reiter **Duplikate** findet Dateien mit identischem Inhalt – egal ob gleicher oder anderer Name.
