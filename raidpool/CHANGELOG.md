@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.15.2
+- „Abbrechen“ der Duplikatsuche wirkte im Schnell- und Vollvergleich nicht (wurde als Lesefehler der
+  aktuellen Datei gewertet, die Suche lief mit der nächsten weiter).
+
 ## 0.15.1
 - **Duplizierung blieb stehen:** Eine kurz gesperrte Datenbank (während der Duplikatsuche) beendete den
   Duplizierungsdienst, die Warteschlange wuchs nur noch. Fehler werden jetzt abgefangen und später

@@ -433,6 +433,8 @@ class DupeFinder:
                         ranges = [(0, PARTIAL), (size // 2 - PARTIAL // 2, PARTIAL), (size - PARTIAL, PARTIAL)]
                     try:
                         h = self._read_hash(phys[0][2], ranges, cfg, pausable)
+                    except InterruptedError:
+                        raise          # Abbrechen (InterruptedError ist auch ein OSError)
                     except OSError as err:
                         log.debug("Nicht lesbar %s: %s", f[1], err)
                         continue
@@ -460,6 +462,8 @@ class DupeFinder:
                         continue
                     try:
                         h = self._read_hash(phys[0][2], [(0, size)], cfg, pausable)
+                    except InterruptedError:
+                        raise          # Abbrechen (InterruptedError ist auch ein OSError)
                     except OSError as err:
                         log.debug("Nicht lesbar %s: %s", f[1], err)
                         continue
