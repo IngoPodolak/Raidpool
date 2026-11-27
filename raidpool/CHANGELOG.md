@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.5
+- **Schöneres HA-Dashboard:** Tortendiagramme in TB mit Anteilen in %, Pool-Diagramm in voller Breite;
+  je Platte ein kleines Diagramm „xx % belegt“ (zwei nebeneinander) und darunter eine Zeile mit
+  Belegung, Temperatur, freiem Platz und Schalter für die Direktfreigabe. Kurze, eindeutige Plattennamen
+  (z. B. „WD100EFAX · 39D“).
+
 ## 0.19.4
 - „Dashboard in HA erzeugen“ trägt apexcharts-card und Bubble Card als Dashboard-Ressource ein, falls sie
   installiert, aber nicht eingetragen sind (sonst zeigt HA bei den Tortendiagrammen „Konfigurationsfehler“).

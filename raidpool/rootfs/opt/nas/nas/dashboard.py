@@ -12,25 +12,62 @@ from .smb import ha_ws
 log = logging.getLogger("nas")
 
 URL_PATH = "raidpool-nas"
-COLORS = {"daten": "#03a9f4", "duplikate": "#7c5cff", "sonstiges": "#9aa3ad", "frei": "#dfe3e8", "belegt": "#03a9f4"}
-TOTAL_FMT = ("EVAL:function(w){const t=w.globals.seriesTotals.reduce((a,b)=>a+b,0);"
-             "return t>=1000?(t/1000).toFixed(1)+' TB':t.toFixed(0)+' GB'}")
+COLORS = {"daten": "#03a9f4", "duplikate": "#7c5cff", "sonstiges": "#9aa3ad", "frei": "#3a3f47", "belegt": "#03a9f4"}
+# Werte kommen in GB, angezeigt wird in TB mit einer Nachkommastelle
+TB = {"transform": "return x / 1000;", "unit": " TB", "float_precision": 1}
+TOTAL_TB = "EVAL:function(w){const t=w.globals.seriesTotals.reduce((a,b)=>a+b,0);return t.toFixed(1)+' TB'}"
+USED_PCT = ("EVAL:function(w){const s=w.globals.seriesTotals;const t=s.reduce((a,b)=>a+b,0);"
+            "return t?Math.round(100*s[0]/t)+' %':''}")
+PCT_LABEL = "EVAL:function(v){return v>=4?Math.round(v)+' %':''}"
 
 
-def _donut(title, series):
+def _donut(title, series, height=300):
+    """Großes Tortendiagramm (Pool): Legende mit TB, Anteile in %, in der Mitte die Gesamtgröße."""
+    return {
+        "type": "custom:apexcharts-card",
+        "chart_type": "donut",
+        "header": {"show": bool(title), "title": title or "", "show_states": False},
+        "series": [dict(TB, entity=e, name=n, color=c) for e, n, c in series],
+        "apex_config": {
+            "chart": {"height": height},
+            "stroke": {"width": 0},
+            "legend": {"position": "bottom", "fontSize": "13px"},
+            "dataLabels": {"enabled": True, "formatter": PCT_LABEL, "dropShadow": {"enabled": False}},
+            "plotOptions": {"pie": {"donut": {"size": "70%", "labels": {
+                "show": True, "value": {"fontSize": "22px"},
+                "total": {"show": True, "label": "Gesamt", "formatter": TOTAL_TB}}}}},
+        },
+        "grid_options": {"columns": 12},
+    }
+
+
+def _mini_donut(title, used, free):
+    """Kleines Tortendiagramm je Platte: in der Mitte „xx % belegt“, ohne Legende."""
     return {
         "type": "custom:apexcharts-card",
         "chart_type": "donut",
         "header": {"show": True, "title": title, "show_states": False},
-        "series": [{"entity": e, "name": n, "color": c, "unit": " GB"} for e, n, c in series],
+        "series": [dict(TB, entity=used, name="Belegt", color=COLORS["belegt"]),
+                   dict(TB, entity=free, name="Frei", color=COLORS["frei"])],
         "apex_config": {
-            "legend": {"position": "bottom"},
-            "dataLabels": {"enabled": True},
-            "plotOptions": {"pie": {"donut": {"size": "62%", "labels": {
-                "show": True, "total": {"show": True, "label": "Gesamt", "formatter": TOTAL_FMT}}}}},
+            "chart": {"height": 170},
+            "stroke": {"width": 0},
+            "legend": {"show": False},
+            "dataLabels": {"enabled": False},
+            "plotOptions": {"pie": {"donut": {"size": "72%", "labels": {
+                "show": True, "name": {"fontSize": "12px"}, "value": {"fontSize": "18px"},
+                "total": {"show": True, "label": "belegt", "formatter": USED_PCT}}}}},
         },
         "grid_options": {"columns": 6},
     }
+
+
+def _short(d):
+    """Kurzer, eindeutiger Plattenname, z. B. „WD100EFAX · 39D“."""
+    model = (d.get("model") or d.get("name") or "Platte").replace("WDC ", "").replace("_", " ").strip()
+    model = model.split("-")[0] if "-" in model else model
+    serial = (d.get("serial") or "")[-3:]
+    return f"{model} · {serial}" if serial else model
 
 
 def _sub(entity, icon, name=None):
@@ -38,6 +75,11 @@ def _sub(entity, icon, name=None):
     if name:
         b["name"] = name
     return b
+
+
+def _toggle(entity, icon):
+    return {"entity": entity, "icon": icon, "show_state": False, "show_background": True,
+            "tap_action": {"action": "toggle"}}
 
 
 def _slider(entity, name, icon, subs):
@@ -93,7 +135,7 @@ def build(app, ids):
                   (E(f"{o}_sonstiges"), "Sonstiges", COLORS["sonstiges"]), (E(f"{o}_frei"), "Frei", COLORS["frei"])]
         series = [x for x in series if x[0]]
         if series:
-            cards.append(dict(_donut(p["name"], series), grid_options={"columns": 12}))
+            cards.append(_donut(None, series))   # Überschrift steht schon darüber
         if E(f"{o}_belegt"):
             cards.append(_slider(E(f"{o}_belegt"), f"Pool {p['name']}", "mdi:database",
                                  [_sub(E(f"{o}_frei"), "mdi:database-check", "frei"),
@@ -104,26 +146,25 @@ def build(app, ids):
                 cards.append(_press(E(uid, "button"), name, icon))
         sections.append({"type": "grid", "cards": cards})
 
-    # Platten
-    disk_cards = [{"type": "heading", "heading": "Platten", "icon": "mdi:harddisk"}]
+    # Platten: oben die Belegung als kleine Tortendiagramme (2 je Zeile), darunter je Platte eine Zeile
+    # mit Temperatur, freiem Platz, Größe und Schalter für die Direktfreigabe
+    donuts, rows = [], []
     for d in app.disks.disks:
         if d["system"] or d.get("network"):
             continue
         o = f"raidpool_platte_{_slug(d['serial'] or d['name'])}"
-        label = next((pt["label"] for pt in d["partitions"] if pt.get("label")), d["model"] or d["name"])
-        if E(f"{o}_belegt"):
-            disk_cards.append(_slider(E(f"{o}_belegt"), f"{label} · {d['model'] or d['name']}", "mdi:harddisk",
-                                      [_sub(E(f"{o}_temperatur"), "mdi:thermometer"),
-                                       _sub(E(f"{o}_frei"), "mdi:harddisk-plus", "frei"),
-                                       _sub(E(f"{o}_groesse"), "mdi:harddisk", "Größe")]))
+        name = _short(d)
         if E(f"{o}_belegt_gb") and E(f"{o}_frei"):
-            disk_cards.append(_donut(label, [(E(f"{o}_belegt_gb"), "Belegt", COLORS["belegt"]),
-                                             (E(f"{o}_frei"), "Frei", COLORS["frei"])]))
-        if E(f"{o}_direktfreigabe", "switch"):
-            disk_cards.append(_switch(E(f"{o}_direktfreigabe", "switch"), f"Direktfreigabe {label}",
-                                      "mdi:folder-network-outline"))
-    if len(disk_cards) > 1:
-        sections.append({"type": "grid", "cards": disk_cards})
+            donuts.append(_mini_donut(name, E(f"{o}_belegt_gb"), E(f"{o}_frei")))
+        if E(f"{o}_belegt"):
+            subs = [_sub(E(f"{o}_temperatur"), "mdi:thermometer"),
+                    _sub(E(f"{o}_frei"), "mdi:harddisk-plus", "frei")]
+            if E(f"{o}_direktfreigabe", "switch"):
+                subs.append(_toggle(E(f"{o}_direktfreigabe", "switch"), "mdi:folder-network-outline"))
+            rows.append(_slider(E(f"{o}_belegt"), name, "mdi:harddisk", subs))
+    if donuts or rows:
+        sections.append({"type": "grid", "cards": [{"type": "heading", "heading": "Platten", "icon": "mdi:harddisk"}]
+                         + donuts + rows})
 
     return {"title": "RAIDPool", "views": [{"title": "RAIDPool", "path": "uebersicht", "icon": "mdi:nas",
                                             "type": "sections", "max_columns": 3, "sections": sections}]}
