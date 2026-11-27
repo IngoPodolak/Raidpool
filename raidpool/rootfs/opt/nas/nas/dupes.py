@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS dup_ignore (
   hash TEXT PRIMARY KEY, kind TEXT, created INTEGER, note TEXT);
 CREATE TABLE IF NOT EXISTS dup_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT, started INTEGER, finished INTEGER, trigger TEXT,
-  status TEXT, groups INTEGER, files INTEGER, wasted INTEGER, read_bytes INTEGER, error TEXT);
+  status TEXT, groups INTEGER, files INTEGER, wasted INTEGER, read_bytes INTEGER, error TEXT, scope TEXT);
 """
 
 DEFAULTS = {
@@ -147,6 +147,12 @@ class DupeFinder:
         self.index = index
         self.db = connect()
         self.db.executescript(SCHEMA)
+        try:   # ältere Datenbanken: Spalte für gezielte Suche nachrüsten
+            self.db.execute("ALTER TABLE dup_runs ADD COLUMN scope TEXT")
+            self.db.commit()
+        except Exception:  # noqa: BLE001
+            pass
+        self.scope = None
         self.lock = threading.Lock()
         self.idle = IdleMonitor()
         self.thread = None
@@ -221,6 +227,26 @@ class DupeFinder:
                     res.append((u, pp[u], p))
         return res
 
+    def _in_scope(self, pool_id, path):
+        sc = getattr(self, "scope", None)
+        if not sc:
+            return True
+        for f in sc["folders"]:
+            fp, _, fpath = f.partition(":")
+            if fp == pool_id and (not fpath or path == fpath or path.startswith(fpath + "/")):
+                return True
+        return False
+
+    def scope_text(self, sc=None):
+        sc = sc if sc is not None else getattr(self, "scope", None)
+        if not sc:
+            return None
+        names = []
+        for f in sc["folders"]:
+            fp, _, fpath = f.partition(":")
+            names.append(self.name_of(fp) + (" › " + fpath if fpath else ""))
+        return ", ".join(names) + (" (nur untereinander)" if sc["within"] else " (mit allem verglichen)")
+
     def _excluded(self, pool_id, path, cfg):
         name = path.rsplit("/", 1)[-1].lower()
         if name in JUNK_NAMES:
@@ -280,11 +306,15 @@ class DupeFinder:
             time.sleep(15)
 
     # ------------------------------------------------------------ Scan
-    def start(self, trigger="manuell"):
+    def start(self, trigger="manuell", folders=None, within=False):
+        """folders: gezielte Suche in diesen Ordnern ("pool:pfad", pfad leer = ganzer Pool/Quelle).
+        within: nur Duplikate innerhalb dieser Ordner; sonst Dateien dieser Ordner mit allem vergleichen."""
         if getattr(self, "paused_reason", None):
             raise ValueError(f"Pausiert: {self.paused_reason}")
         if self.thread and self.thread.is_alive():
             raise ValueError("Duplikatsuche läuft bereits")
+        folders = [f.strip().rstrip("/") for f in (folders or []) if f and ":" in f]
+        self.scope = {"folders": folders, "within": bool(within)} if folders else None
         self.cancel.clear()
         self.thread = threading.Thread(target=self._run, args=(trigger,), daemon=True, name="dupes")
         self.thread.start()
@@ -299,9 +329,10 @@ class DupeFinder:
         p = self.progress = {"running": True, "trigger": trigger, "phase": "Index aktualisieren",
                              "started": int(time.time()), "done": 0, "total": 0,
                              "read_bytes": 0, "paused": False, "groups": 0}
+        p["scope"] = self.scope_text()
         with self.lock:
-            cur = self.db.execute("INSERT INTO dup_runs (started, trigger, status) VALUES (?,?,?)",
-                                  (p["started"], trigger, "läuft"))
+            cur = self.db.execute("INSERT INTO dup_runs (started, trigger, status, scope) VALUES (?,?,?,?)",
+                                  (p["started"], trigger, "läuft", p["scope"]))
             run_id = cur.lastrowid
             self.db.commit()
         status, err = "fertig", None
@@ -350,12 +381,18 @@ class DupeFinder:
                 "ORDER BY size DESC", (min_size, min_size)).fetchall() if r[0] in active]
             cache = {(r[0], r[1]): (r[2], r[3], r[4], r[5]) for r in
                      self.db.execute("SELECT pool, path, size, mtime, partial, full FROM hashes")}
+        sc = getattr(self, "scope", None)
         by_size = {}
         for r in rows:
             if self._excluded(r[0], r[1], cfg):
                 continue
+            if sc and sc["within"] and not self._in_scope(r[0], r[1]):
+                continue
             by_size.setdefault(r[2], []).append(tuple(r))
         by_size = {s: lst for s, lst in by_size.items() if len(lst) > 1}
+        if sc:
+            # gezielte Suche: nur Größen, bei denen mindestens eine Datei aus den gewählten Ordnern dabei ist
+            by_size = {s: lst for s, lst in by_size.items() if any(self._in_scope(f[0], f[1]) for f in lst)}
 
         def cached(f, kind):
             c = cache.get((f[0], f[1]))
@@ -405,7 +442,8 @@ class DupeFinder:
                 self.db.commit()
 
         # Schritt 3: Vollvergleich
-        cands = {k: v for k, v in partial_groups.items() if len(v) > 1}
+        cands = {k: v for k, v in partial_groups.items()
+                 if len(v) > 1 and (not sc or any(self._in_scope(f[0], f[1]) for f in v))}
         p["phase"] = "Vollvergleich"
         p["total"] = sum(len(v) for v in cands.values())
         p["total_bytes"] = sum(k[0] * len(v) for k, v in cands.items())
@@ -433,7 +471,7 @@ class DupeFinder:
         p["phase"] = "Ergebnis speichern"
         out = []
         for h, lst in groups.items():
-            if len(lst) > 1:
+            if len(lst) > 1 and (not sc or any(self._in_scope(f[0], f[1]) for f in lst)):
                 for f in lst:
                     out.append((h, f[2], f[0], f[1], f[3], f[4]))
         with self.lock:

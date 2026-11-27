@@ -75,9 +75,10 @@ window.renderDupes = async function (force) {
         <div class="stat"><b>${fmtNum(sum.ignored)}</b><span>ignoriert</span></div>
       </div>
       <div class="row spread">
-        <div class="small muted">${last ? `Letzte Suche: ${fmtTime(last.finished || last.started)} · ${esc(last.trigger)} · ${esc(last.status)}` : "Noch nie gesucht"}<br>Modus: ${modeText}</div>
+        <div class="small muted">${last ? `Letzte Suche: ${fmtTime(last.finished || last.started)} · ${esc(last.trigger)} · ${esc(last.status)}${last.scope ? `<br>Nur in: ${esc(last.scope)}` : ""}` : "Noch nie gesucht"}<br>Modus: ${modeText}</div>
         ${running ? `<button class="btn danger" onclick="act(()=>api('dupes/stop',{}),'Wird abgebrochen …')">Abbrechen</button>`
-                  : `<button class="btn primary" onclick="act(()=>api('dupes/start',{}),'Duplikatsuche gestartet')">Jetzt suchen</button>`}
+                  : `<div class="row"><button class="btn" onclick="scopeDialog()" title="Nur bestimmte Ordner durchsuchen">Ordner durchsuchen …</button>
+                     <button class="btn primary" onclick="act(()=>api('dupes/start',{}),'Duplikatsuche gestartet')">Jetzt suchen</button></div>`}
       </div>
     </div>
   </div>
@@ -309,6 +310,43 @@ async function openFolderPicker(onPick, pool = null, path = "", opts = {}) {
   $("#fp-ok").onclick = () => { if (!o.keepOpen) dlg.close(); onPick(pool, path); };
   if (!dlg.open) dlg.showModal();
 }
+
+// ---------------------------------------------------------------- Gezielte Suche in Ordnern
+dz.scope = dz.scope || { folders: [], within: false };
+function scopeLabel(v) {
+  const [pool, ...rest] = v.split(":"); const path = rest.join(":");
+  const pl = ((state.status && state.status.pools) || []).find((p) => p.id === pool);
+  const src = ((dz.status && dz.status.sources) || []).find((x) => x.id === pool);
+  return (pl ? pl.name : src ? src.name : pool) + (path ? " › " + path : " (gesamt)");
+}
+window.scopeDialog = () => {
+  const sc = dz.scope;
+  $("#dlg-body").innerHTML = `<h2>Bestimmte Ordner durchsuchen</h2>
+    <p class="small muted">Wähle einen oder mehrere Ordner. Ausgeschlossene Ordner bleiben ausgeschlossen.</p>
+    <div class="picker">${sc.folders.length ? sc.folders.map((f, i) => `<div class="picker-row" style="cursor:default">
+        <span class="picker-name">📁 ${esc(scopeLabel(f))}</span>
+        <button type="button" class="btn" style="padding:2px 8px;font-size:12px" onclick="scopeRemove(${i})">Entfernen</button></div>`).join("")
+      : '<div class="muted small" style="padding:12px">Noch kein Ordner gewählt.</div>'}</div>
+    <div style="margin:10px 0"><button type="button" class="btn" onclick="scopeAdd()">+ Ordner hinzufügen</button></div>
+    <label class="row small" style="margin:6px 0"><input type="radio" name="sc-mode" value="all" ${sc.within ? "" : "checked"}>
+      Mit allen anderen Dateien vergleichen <span class="muted">– findet auch Kopien außerhalb der Ordner</span></label>
+    <label class="row small" style="margin:6px 0"><input type="radio" name="sc-mode" value="within" ${sc.within ? "checked" : ""}>
+      Nur innerhalb der gewählten Ordner vergleichen</label>
+    <div class="row" style="justify-content:flex-end;margin-top:14px">
+      <button type="button" class="btn" onclick="$('#dlg').close()">Abbrechen</button>
+      <button type="button" class="btn primary" id="sc-go" ${sc.folders.length ? "" : "disabled"}>Suche starten</button></div>`;
+  document.querySelectorAll("input[name=sc-mode]").forEach((r) => (r.onchange = () => (sc.within = r.value === "within")));
+  $("#sc-go").onclick = () => { $("#dlg").close();
+    act(() => api("dupes/start", { folders: sc.folders, within: sc.within }), "Gezielte Duplikatsuche gestartet"); };
+  if (!$("#dlg").open) $("#dlg").showModal();
+};
+window.scopeRemove = (i) => { dz.scope.folders.splice(i, 1); scopeDialog(); };
+window.scopeAdd = () => openFolderPicker((pool, path) => {
+  const v = pool + ":" + path;
+  if (!dz.scope.folders.includes(v)) dz.scope.folders.push(v);
+  scopeDialog();
+}, null, "", { title: "Ordner für die Suche wählen", ok: "Ordner hinzufügen", allowRoot: true, markExcluded: false,
+  keepOpen: true, onCancel: () => scopeDialog() });
 
 // ---------------------------------------------------------------- Dauerhaft ignoriert
 function ignoredCard() {

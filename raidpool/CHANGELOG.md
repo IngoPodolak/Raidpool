@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.15.0
+- **Duplikatsuche in bestimmten Ordnern:** „Ordner durchsuchen …“ wählt einen oder mehrere Ordner (auch
+  ganze Pools oder Netzwerkquellen). Wahlweise mit allen anderen Dateien vergleichen (findet auch Kopien
+  außerhalb) oder nur innerhalb der gewählten Ordner. Die letzte Suche zeigt, worauf sie beschränkt war.
+
 ## 0.14.0
 - **Schneller Scan:** Abgleich und Duplikatsuche lesen nur noch Ordner neu ein, deren Änderungszeit sich
   geändert hat (neue, gelöschte, umbenannte Einträge) – meist Sekunden statt vieler Minuten, kaum

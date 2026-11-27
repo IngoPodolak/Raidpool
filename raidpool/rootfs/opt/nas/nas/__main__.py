@@ -27,7 +27,7 @@ from .smb import SambaManager
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 INGRESS_IP = "172.30.32.2"
-VERSION = "0.14.0"
+VERSION = "0.15.0"
 
 log = logging.getLogger("nas")
 
@@ -389,7 +389,7 @@ class App:
             self.disks.refresh()
             return {"ok": True}
         if path == "dupes/start":
-            self.dupes.start("manuell")
+            self.dupes.start("manuell", folders=body.get("folders"), within=body.get("within", False))
             return {"ok": True}
         if path == "dupes/stop":
             self.dupes.stop_scan()
