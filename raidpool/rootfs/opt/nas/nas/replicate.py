@@ -166,6 +166,7 @@ class Replicator:
         self.dirty_pools = set()
         self.ino = None
         self.copy_active = lambda: False
+        self.mover_active = lambda: False
         self.audit = None
         self.fan = None
         self.fan_branches = []
@@ -422,6 +423,10 @@ class Replicator:
         last_agg = time.time()
         while not self.stop.wait(1):
             if not self.cfg()["enabled"] or not self.writable() or self.paused_reason:
+                continue
+            if self.mover_active():
+                # Der Mover schreibt gerade parallel von der SSD auf die Platten (inkl. aller Kopien) –
+                # dann keine Platte-zu-Platte-Duplizierung, die würde ihn nur ausbremsen
                 continue
             now = time.time()
             with self.lock:

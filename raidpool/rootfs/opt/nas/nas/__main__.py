@@ -27,7 +27,7 @@ from .smb import SambaManager
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 INGRESS_IP = "172.30.32.2"
-VERSION = "0.19.0"
+VERSION = "0.19.1"
 
 log = logging.getLogger("nas")
 
@@ -64,6 +64,7 @@ class App:
         from .index import Index as _Ix
         _Ix.copy_active = staticmethod(self.live.copy_active)
         self.rep.copy_active = self.live.copy_active
+        self.rep.mover_active = self.live.mover_active
         self.dupes.copy_active = self.live.copy_active
         self.cache.rep = self.rep
         self.version = VERSION

@@ -91,8 +91,12 @@ class LiveMonitor:
         if writing and rate > 20e6:
             self._copy_seen = time.time()
 
+    def mover_active(self):
+        return any((st or {}).get("running") for st in list(self.app.cache.state.values()))
+
     def copy_active(self):
-        return time.time() - self._copy_seen < 30
+        """Großer Kopiervorgang über die Freigaben oder der SSD-Cache wird gerade auf die Platten verteilt."""
+        return time.time() - self._copy_seen < 30 or self.mover_active()
 
     def _copy_speed(self, dt):
         c = self.app.rep.current

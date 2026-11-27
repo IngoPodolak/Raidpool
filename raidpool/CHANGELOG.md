@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.19.1
+- Während der Mover den SSD-Cache auf die Platten verteilt (inkl. aller Kopien), ruht die
+  Platte-zu-Platte-Duplizierung; Scans, Abgleich, Ausbalancieren und Duplikatsuche pausieren ebenfalls.
+  Wartende Dateien werden danach bearbeitet. Die Live-Ansicht zeigt das an.
+
 ## 0.19.0
 - **Downloads auf der SSD fertigstellen** (SSD-Cache, standardmäßig an): Archiv- und Downloadteile (.rar,
   .part, .7z, .zip, .001 …) bleiben auf der SSD (bis 24 h einstellbar) – sie werden nach dem Entpacken

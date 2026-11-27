@@ -21,6 +21,7 @@ function liveHtml(d) {
       <div class="progress"><div style="width:${pct}%"></div></div></div>`);
   }
   if (d.copy_active) act.unshift(`<div class="lv-act small"><span class="badge info">Kopiervorgang erkannt</span> Scans, Abgleich und Duplikatsuche warten, bis er fertig ist – nur neue Dateien werden bearbeitet.</div>`);
+  else if ((d.cache || []).length) act.unshift(`<div class="lv-act small"><span class="badge info">SSD-Cache wird verteilt</span> Platte-zu-Platte-Duplizierung, Scans und Abgleich warten so lange.</div>`);
   if (r.job) act.push(`<div class="lv-act small">🔁 <b>${esc(r.job.label)}</b> · ${esc(r.job.phase || "")}${r.job.total ? ` · ${fmtNum(r.job.done)} / ${fmtNum(r.job.total)}` : ""}${r.job.paused ? ` <span class="badge warn">${esc(r.job.paused)}</span>` : ""}</div>`);
   (d.cache || []).forEach((c) => act.push(`<div class="lv-act"><div class="row spread small"><span>⚡ <b>SSD-Cache → Platten</b> (${esc(c.pool)})${(c.active || []).length > 1 ? ` · ${c.active.length} Dateien gleichzeitig` : ""}</span>
       <span class="muted">${fmtNum(c.done)} / ${fmtNum(c.total)} · ${fmtBytes(c.bytes)}</span></div>
@@ -34,7 +35,7 @@ function liveHtml(d) {
       <div class="progress"><div style="width:${p.total ? (100 * p.done) / p.total : 0}%"></div></div></div>`);
   }
   if (d.check) act.push(`<div class="lv-act small">🩺 <b>Dateisystem-Prüfung</b> ${esc(d.check.label)} · ${esc(d.check.phase || "")}</div>`);
-  if (r.queue) act.push(`<div class="lv-act small">⏳ ${fmtNum(r.queue)} Datei(en) warten auf Duplizierung</div>`);
+  if (r.queue) act.push(`<div class="lv-act small">⏳ ${fmtNum(r.queue)} Datei(en) warten auf Duplizierung${(d.cache || []).length ? " – erst wenn der SSD-Cache verteilt ist" : ""}</div>`);
 
   const disks = (d.disks || []).map((x) => `<div class="lv-disk">
       <div class="row spread small"><span><b>${esc(x.label || x.model)}</b> <span class="muted">${esc(x.dev)}${x.system ? " · System" : ""}</span></span>
