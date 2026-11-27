@@ -27,7 +27,7 @@ from .smb import SambaManager
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 INGRESS_IP = "172.30.32.2"
-VERSION = "0.12.4"
+VERSION = "0.13.0"
 
 log = logging.getLogger("nas")
 
@@ -54,6 +54,10 @@ class App:
         self.smb = SambaManager(self.options, self.settings, self.pools)
         self.rep = Replicator(self.options, self.settings, self.pools, self.index)
         self.health = Health(self.options, self.settings, self.disks, self.pools, self.rep, self.dupes)
+        from .audit import AuditListener
+        self.audit = AuditListener(self.rep.external_event)
+        self.rep.audit = self.audit
+        self.cache.on_moved = lambda pid, rel: self.rep.enqueue(pid, rel)
         self.version = VERSION
         self.health.raid = self.raid
         self.mqtt = MqttBridge(self)
@@ -93,11 +97,15 @@ class App:
         self.power.apply_all()
         try:
             self.smb.apply_ips()
+            self.audit.start()       # vor Samba, damit /dev/log bereitsteht
             self.smb.start()
         except Exception as err:  # noqa: BLE001
             self.smb.error = str(err)
             log.exception("Samba-Start fehlgeschlagen")
         threading.Thread(target=self.smb.watchdog_loop, daemon=True, name="smb-watchdog").start()
+        from .supmounts import SupervisorMounts
+        self.sup_mounts = SupervisorMounts(self.smb)
+        self.sup_mounts.start(self.stop)
         for fn, name in ((self.rep.worker_loop, "rep-worker"), (self.rep.watch_loop, "rep-watch"),
                          (self.rep.scheduler_loop, "rep-scheduler"), (self.health.monitor_loop, "health"),
                          (self.cache.loop, "cache-mover")):

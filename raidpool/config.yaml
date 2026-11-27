@@ -1,5 +1,5 @@
 name: RAIDPool
-version: "0.12.4"
+version: "0.13.0"
 slug: raidpool
 description: >-
   NAS mit Festplatten-Pool wie StableBit DrivePool (Duplizierung pro Ordner),
@@ -36,6 +36,7 @@ homeassistant_api: true
 services:
   - mqtt:want
 hassio_api: true
+hassio_role: manager
 # Cache auf der System-SSD und der (neu aufbaubare) Datei-Index gehören nicht in HA-Backups
 backup_exclude:
   - "cache"

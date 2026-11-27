@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.13.0
+- **Echtzeit-Duplizierung über Samba:** Jede über die Freigaben geschriebene, umbenannte oder gelöschte
+  Datei meldet Samba direkt an RAIDPool – unabhängig von der Ordnerzahl (der HAOS-Kernel hat kein
+  fanotify, das inotify-Kontingent reicht bei großen Pools nicht). Reines Lesen/Abspielen löst nichts aus.
+- Vom SSD-Cache auf die Platten verschobene Dateien werden sofort dupliziert.
+- **Netzwerkspeicher in HA, die auf RAIDPool zeigen** (z. B. Backup-Ziel \\SERVER\Backup), werden
+  automatisch neu geladen, sobald RAIDPool läuft – beim HA-Start sind sie sonst „fehlgeschlagen“.
+
 ## 0.12.4
 - Weboberfläche bleibt während eines laufenden Scans/Abgleichs bedienbar (zeigt kurz die letzten Werte),
   statt bis zum Ende zu warten und nicht zu laden.

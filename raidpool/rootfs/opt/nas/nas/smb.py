@@ -40,6 +40,12 @@ ACCESS = ("none", "ro", "rw")
 
 
 # ---------------------------------------------------------------- HA-Benutzer (WebSocket, ohne Zusatzpakete)
+# Samba meldet jede geschlossene/umbenannte/gelöschte Datei per syslog an RAIDPool (audit.py)
+AUDIT_LINES = ["   full_audit:prefix = RAIDPOOL|%P", "   full_audit:success = close renameat unlinkat",
+               "   full_audit:failure = none", "   full_audit:facility = LOCAL5",
+               "   full_audit:priority = NOTICE", "   full_audit:syslog = true"]
+
+
 def _ws_frame(payload):
     data = payload.encode()
     head = bytearray([0x81])
@@ -628,6 +634,8 @@ class SambaManager:
                 lines += ["   guest ok = yes", f"   read only = {'yes' if share_ro else 'no'}"]
                 if not share_ro and ro:
                     lines.append(f"   read list = {' '.join(ro)}")
+            vfs.insert(0, "full_audit")   # meldet Änderungen an RAIDPool (Echtzeit-Duplizierung)
+            lines += AUDIT_LINES
             if vfs:
                 lines.append(f"   vfs objects = {' '.join(vfs)}")
             if recycle:
@@ -662,7 +670,8 @@ class SambaManager:
                       "   create mask = 0664", "   directory mask = 0775",
                       "   veto files = /.nas-trash/",
                       f"   valid users = {' '.join(rw + ro) if rw + ro else 'root'}",
-                      f"   read only = {'yes' if disk_ro else 'no'}"]
+                      f"   read only = {'yes' if disk_ro else 'no'}",
+                      "   vfs objects = full_audit"] + AUDIT_LINES
             if ro and not disk_ro:
                 lines.append(f"   read list = {' '.join(ro)}")
             lines.append("")

@@ -63,6 +63,7 @@ class CacheManager:
         self.disks = disks
         self.stop = threading.Event()
         self.lock = threading.Lock()
+        self.on_moved = None     # Rückruf (pool_id, rel) nach dem Verschieben auf die Platten
         self.state = {}            # pool -> Status des Movers
         self.activity = collections.deque(maxlen=50)
         self.paused_reason = None
@@ -212,6 +213,11 @@ class CacheManager:
                 pass
             raise
         os.remove(src)
+        if self.on_moved:
+            try:
+                self.on_moved(pool["id"], rel)
+            except Exception:  # noqa: BLE001
+                pass
         return st.st_size
 
     def move(self, pool, mode="auto"):

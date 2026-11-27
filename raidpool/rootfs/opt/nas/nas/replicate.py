@@ -13,6 +13,7 @@ import collections
 import ctypes
 import datetime as dt
 import errno
+import stat
 import logging
 import os
 import select
@@ -164,6 +165,7 @@ class Replicator:
         self.watch = {"active": False, "dirs": 0, "error": None, "files": False}
         self.dirty_pools = set()
         self.ino = None
+        self.audit = None
         self.fan = None
         self.fan_branches = []
         self.watch_budget = 0
@@ -535,6 +537,59 @@ class Replicator:
                     self.fan.close()
                     self.fan = None
 
+    # ------------------------------------------------------------ Meldungen von Samba (audit.py)
+    def _locate(self, path):
+        """Absoluter Pfad -> (pool_id, rel, disk_uuid|None) oder None."""
+        for pool in list(self.settings.data["pools"]):
+            roots = [(self.pools.mountpoint(pool), None)]
+            try:
+                roots.append((self.pools.base_mountpoint(pool), None))
+            except Exception:  # noqa: BLE001
+                pass
+            roots += [(b, u) for u, b, ok in self.pools.branches(pool) if ok]
+            for root, uuid in roots:
+                root = root.rstrip("/")
+                if path.startswith(root + "/"):
+                    rel = path[len(root) + 1:]
+                    return (pool["id"], rel, uuid) if rel and not _ignored(rel) else None
+        return None
+
+    def external_event(self, op, path, new=None):
+        if not (self.cfg()["enabled"] and self.cfg()["realtime"] and self.writable()):
+            return
+        loc = self._locate(path)
+        if op == "write":
+            if not loc:
+                return
+            try:
+                st = os.stat(path)
+            except OSError:
+                return
+            # nur wirklich geänderte Dateien (ctime lässt sich – anders als mtime – nicht zurücksetzen);
+            # reines Lesen/Abspielen löst so keine Arbeit aus
+            if not stat.S_ISREG(st.st_mode) or time.time() - st.st_ctime > 600:
+                return
+            if not self._is_self_op(path):
+                self.enqueue(loc[0], loc[1], loc[2])
+        elif op == "delete":
+            if loc:
+                self.index.delete_prefix(loc[0], loc[1])
+                self.enqueue(loc[0], loc[1], None)
+        elif op == "rename":
+            nloc = self._locate(new) if new else None
+            if loc:
+                self.index.delete_prefix(loc[0], loc[1])
+                self.enqueue(loc[0], loc[1], None)
+            if nloc:
+                if os.path.isdir(new):
+                    # Ordner umbenannt/verschoben: Dateien neu erfassen (mergerfs hat alle Kopien mitgenommen)
+                    for root, _dirs, files in os.walk(new):
+                        for f in files:
+                            r = os.path.relpath(os.path.join(root, f), new)
+                            self.enqueue(nloc[0], f"{nloc[1]}/{r}", nloc[2])
+                else:
+                    self.enqueue(nloc[0], nloc[1], nloc[2])
+
     def _setup_fanotify(self):
         self.fan, self.fan_branches = None, []
         try:
@@ -828,6 +883,15 @@ class Replicator:
             except ValueError:
                 pass
 
+    def _watch_view(self):
+        w = dict(self.watch)
+        a = getattr(self, "audit", None)
+        w["smb"] = bool(a and a.active)
+        if w["smb"] and w.get("error") and "begrenzt" in w["error"]:
+            # Änderungen über die Freigaben meldet Samba vollständig – Ordner-Grenze betrifft nur andere Wege
+            w["error"] = None
+        return w
+
     def status(self):
         job = dict(self.job) if self.job else None
         if job:
@@ -836,5 +900,5 @@ class Replicator:
             qlen = len(self.queue)
         return {"config": self.cfg(), "read_only": self.options["read_only"], "queue": qlen,
                 "paused": self.paused_reason,
-                "current": self.current, "job": job, "watch": self.watch, "stats": self.stats,
+                "current": self.current, "job": job, "watch": self._watch_view(), "stats": self.stats,
                 "activity": list(self.activity)[:60]}
