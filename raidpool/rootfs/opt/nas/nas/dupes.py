@@ -28,6 +28,9 @@ log = logging.getLogger("nas")
 
 CHUNK = 1 << 20
 PARTIAL = 64 * 1024
+SAMPLE_FULL = 1 << 20        # Dateien bis 1 MB beim Stichprobenvergleich ganz lesen
+SAMPLE_EDGE = 128 * 1024     # Anfang und Ende
+SAMPLE_POINTS = 8            # weitere Stellen dazwischen (je 64 KB)
 JUNK_NAMES = {"thumbs.db", "desktop.ini", ".ds_store", "folder.jpg", "albumartsmall.jpg"}
 
 SCHEMA = """
@@ -55,6 +58,7 @@ DEFAULTS = {
     "min_size_kb": 100,
     "max_mb_s": 60,
     "refresh_index": True,
+    "verify": "sample",          # sample: Stichproben (vor dem Löschen wird vollständig verglichen) | full
     "excludes": [],
     "sources": [],               # zusätzliche Quellen außerhalb von Pools (Platten/Netzwerkfreigaben, uuid)
     "use_trash": True,
@@ -147,6 +151,11 @@ class DupeFinder:
         self.index = index
         self.db = connect()
         self.db.executescript(SCHEMA)
+        try:   # ältere Datenbanken: Spalte für Stichproben nachrüsten
+            self.db.execute("ALTER TABLE hashes ADD COLUMN sample TEXT")
+            self.db.commit()
+        except Exception:  # noqa: BLE001
+            pass
         try:   # ältere Datenbanken: Spalte für gezielte Suche nachrüsten
             self.db.execute("ALTER TABLE dup_runs ADD COLUMN scope TEXT")
             self.db.commit()
@@ -379,8 +388,8 @@ class DupeFinder:
                 "SELECT pool, path, size, mtime, disks FROM files WHERE size >= ? AND size IN "
                 "(SELECT size FROM files WHERE size >= ? GROUP BY size HAVING count(*) > 1) "
                 "ORDER BY size DESC", (min_size, min_size)).fetchall() if r[0] in active]
-            cache = {(r[0], r[1]): (r[2], r[3], r[4], r[5]) for r in
-                     self.db.execute("SELECT pool, path, size, mtime, partial, full FROM hashes")}
+            cache = {(r[0], r[1]): (r[2], r[3], r[4], r[5], r[6]) for r in
+                     self.db.execute("SELECT pool, path, size, mtime, partial, full, sample FROM hashes")}
         sc = getattr(self, "scope", None)
         by_size = {}
         for r in rows:
@@ -397,15 +406,30 @@ class DupeFinder:
         def cached(f, kind):
             c = cache.get((f[0], f[1]))
             if c and c[0] == f[2] and c[1] == f[3]:
-                return c[2] if kind == "partial" else c[3]
+                return {"partial": c[2], "full": c[3], "sample": c[4]}[kind]
             return None
 
-        def store(f, partial, full):
+        def store(f, partial, full, sample=None):
+            old = cache.get((f[0], f[1]))
+            if sample is None and old and old[0] == f[2] and old[1] == f[3]:
+                sample = old[4]
             with self.lock:
-                self.db.execute("INSERT OR REPLACE INTO hashes VALUES (?,?,?,?,?,?)",
-                                (f[0], f[1], f[2], f[3], partial, full))
+                self.db.execute("INSERT OR REPLACE INTO hashes (pool, path, size, mtime, partial, full, sample) "
+                                "VALUES (?,?,?,?,?,?,?)", (f[0], f[1], f[2], f[3], partial, full, sample))
                 self.db.commit()   # sofort: sonst bliebe die Datenbank während langer Lesevorgänge gesperrt
-            cache[(f[0], f[1])] = (f[2], f[3], partial, full)
+            cache[(f[0], f[1])] = (f[2], f[3], partial, full, sample)
+
+        def read(f, ranges):
+            phys = self.physical_paths(f[0], f[1], f[4])
+            if not phys:
+                return None
+            try:
+                return self._read_hash(phys[0][2], ranges, cfg, pausable)
+            except InterruptedError:
+                raise          # Abbrechen (InterruptedError ist auch ein OSError)
+            except OSError as err:
+                log.debug("Nicht lesbar %s: %s", f[1], err)
+                return None
 
         # Gleiche Namen zuerst prüfen (häufigster Fall: doppelt heruntergeladen)
         def name_first(lst):
@@ -424,19 +448,12 @@ class DupeFinder:
                 p["done"] += 1
                 h = cached(f, "partial")
                 if h is None:
-                    phys = self.physical_paths(f[0], f[1], f[4])
-                    if not phys:
-                        continue
                     if size <= 3 * PARTIAL:
                         ranges = [(0, size)]
                     else:
                         ranges = [(0, PARTIAL), (size // 2 - PARTIAL // 2, PARTIAL), (size - PARTIAL, PARTIAL)]
-                    try:
-                        h = self._read_hash(phys[0][2], ranges, cfg, pausable)
-                    except InterruptedError:
-                        raise          # Abbrechen (InterruptedError ist auch ein OSError)
-                    except OSError as err:
-                        log.debug("Nicht lesbar %s: %s", f[1], err)
+                    h = read(f, ranges)
+                    if h is None:
                         continue
                     full = h if size <= 3 * PARTIAL else cached(f, "full")
                     store(f, h, full)
@@ -444,34 +461,60 @@ class DupeFinder:
             with self.lock:
                 self.db.commit()
 
-        # Schritt 3: Vollvergleich
         cands = {k: v for k, v in partial_groups.items()
                  if len(v) > 1 and (not sc or any(self._in_scope(f[0], f[1]) for f in v))}
-        p["phase"] = "Vollvergleich"
+
+        # Schritt 3: Stichproben (~0,8 MB je Datei an 10 Stellen; kleine Dateien ganz) – trennt fast alle
+        # Nicht-Duplikate, ohne die Dateien komplett zu lesen
+        p["phase"] = "Stichprobenvergleich"
         p["total"] = sum(len(v) for v in cands.values())
-        p["total_bytes"] = sum(k[0] * len(v) for k, v in cands.items())
         p["done"] = 0
-        groups = {}
+        sample_groups = {}
         for (size, ph), lst in cands.items():
             for f in lst:
                 p["done"] += 1
-                h = cached(f, "full")
+                h = cached(f, "sample")
                 if h is None:
-                    phys = self.physical_paths(f[0], f[1], f[4])
-                    if not phys:
+                    if size <= SAMPLE_FULL:
+                        ranges = [(0, size)]
+                    else:
+                        step = (size - 2 * SAMPLE_EDGE) // (SAMPLE_POINTS + 1)
+                        ranges = ([(0, SAMPLE_EDGE)] +
+                                  [(SAMPLE_EDGE + step * (i + 1), PARTIAL) for i in range(SAMPLE_POINTS)] +
+                                  [(size - SAMPLE_EDGE, SAMPLE_EDGE)])
+                    h = read(f, ranges)
+                    if h is None:
                         continue
-                    try:
-                        h = self._read_hash(phys[0][2], [(0, size)], cfg, pausable)
-                    except InterruptedError:
-                        raise          # Abbrechen (InterruptedError ist auch ein OSError)
-                    except OSError as err:
-                        log.debug("Nicht lesbar %s: %s", f[1], err)
-                        continue
-                    store(f, ph, h)
-                groups.setdefault(h, []).append(f)
-            with self.lock:
-                self.db.commit()
-            p["groups"] = sum(1 for v in groups.values() if len(v) > 1)
+                    full = h if size <= SAMPLE_FULL else cached(f, "full")
+                    store(f, ph, full, h)
+                sample_groups.setdefault((size, h), []).append(f)
+        cands = {k: v for k, v in sample_groups.items()
+                 if len(v) > 1 and (not sc or any(self._in_scope(f[0], f[1]) for f in v))}
+
+        groups = {}
+        if cfg.get("verify") == "full":
+            # Schritt 4 (nur „gründlich“): vollständig lesen
+            p["phase"] = "Vollvergleich"
+            p["total"] = sum(len(v) for v in cands.values())
+            p["total_bytes"] = sum(k[0] * len(v) for k, v in cands.items())
+            p["done"] = 0
+            for (size, sh), lst in cands.items():
+                for f in lst:
+                    p["done"] += 1
+                    h = cached(f, "full")
+                    if h is None:
+                        h = read(f, [(0, size)])
+                        if h is None:
+                            continue
+                        store(f, cached(f, "partial"), h, sh)
+                    groups.setdefault(h, []).append(f)
+                p["groups"] = sum(1 for v in groups.values() if len(v) > 1)
+        else:
+            # Gleiche Größe + gleiche Stichproben = Duplikat. Vor dem Löschen wird jede Datei ohnehin
+            # Byte für Byte mit der bleibenden verglichen, falsche Treffer können also nichts löschen.
+            for (size, sh), lst in cands.items():
+                groups[f"s{size}:{sh}"] = lst
+            p["groups"] = len(groups)
 
         p["phase"] = "Ergebnis speichern"
         out = []

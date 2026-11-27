@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.16.0
+- **Duplikatsuche viel schneller und schonender:** Statt Kandidaten komplett zu lesen, vergleicht sie
+  standardmäßig Größe und Inhalt an 10 Stellen (ca. 0,8 MB je Datei; Dateien bis 1 MB ganz). Bei großen
+  Videos z. B. 0,8 MB statt mehrerer GB. Vor dem Löschen wird wie bisher jede Datei Byte für Byte mit der
+  bleibenden verglichen – ein Fehltreffer kann nichts löschen.
+- Einstellung „Vergleich“: Schnell (Stichproben, Standard) oder Gründlich (komplett lesen).
+- Stichproben werden gespeichert und bei der nächsten Suche wiederverwendet.
+
 ## 0.15.2
 - „Abbrechen“ der Duplikatsuche wirkte im Schnell- und Vollvergleich nicht (wurde als Lesefehler der
   aktuellen Datei gewertet, die Suche lief mit der nächsten weiter).

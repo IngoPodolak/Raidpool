@@ -141,8 +141,13 @@ function settingsCard(st) {
     <div class="settings-grid">
       <div class="field"><label>Dateien ab … KB</label><input type="number" min="1" value="${c.min_size_kb}" onchange="dzSet('min_size_kb', +this.value)"></div>
       <div class="field"><label>Lesegeschwindigkeit max. … MB/s</label><input type="number" min="5" max="2000" value="${c.max_mb_s}" onchange="dzSet('max_mb_s', +this.value)"></div>
+      <div class="field"><label>Vergleich</label><select onchange="dzSet('verify', this.value)">
+        <option value="sample" ${c.verify !== "full" ? "selected" : ""}>Schnell – Stichproben (empfohlen)</option>
+        <option value="full" ${c.verify === "full" ? "selected" : ""}>Gründlich – Dateien komplett lesen</option></select></div>
       <div class="field"><label>Papierkorb aufbewahren … Tage</label><input type="number" min="0" max="365" value="${c.trash_days}" onchange="dzSet('trash_days', +this.value)"></div>
     </div>
+    <p class="small muted">Schnell: gleiche Größe und gleicher Inhalt an 10 Stellen (je Datei ca. 0,8 MB gelesen statt der ganzen Datei).
+      Vor dem Löschen wird jede Datei immer Byte für Byte mit der bleibenden verglichen – ein Fehltreffer kann also nichts löschen.</p>
     <label class="row small"><input type="checkbox" ${c.refresh_index ? "checked" : ""} onchange="dzSet('refresh_index', this.checked)"> Dateiliste vor der Suche aktualisieren</label>
     <label class="row small"><input type="checkbox" ${c.use_trash ? "checked" : ""} onchange="dzSet('use_trash', this.checked)"> Gelöschte Dateien zuerst in den Papierkorb verschieben</label>
     <div class="field"><label>Zusätzlich durchsuchen <span class="muted small">(Platten oder Netzwerkfreigaben außerhalb der Pools)</span></label>
