@@ -230,6 +230,8 @@ class Health:
             self.ups["paused"] = True
             self.rep.paused_reason = "USV im Batteriebetrieb"
             self.dupes.paused_reason = "USV im Batteriebetrieb"
+            if getattr(self.pools, "cache", None):
+                self.pools.cache.paused_reason = "USV im Batteriebetrieb"
             self.dupes.cancel.set()
             self.rep.cancel.set()
             run(["sync"])
@@ -248,6 +250,8 @@ class Health:
             self.ups["paused"] = False
             self.rep.paused_reason = None
             self.dupes.paused_reason = None
+            if getattr(self.pools, "cache", None):
+                self.pools.cache.paused_reason = None
             self.notify("Strom wieder da", "Duplizierung läuft wieder.", nid="ups", level="info")
         if self.ups["unmounted"]:
             self.ups["unmounted"] = False

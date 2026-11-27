@@ -38,6 +38,21 @@ verschiedenen Platten liegt, wie es das Soll ihres Ordners vorgibt.
 - Bei der Übernahme eines DrivePools wird das Soll automatisch auf die erkannte Duplizierung gesetzt.
 - Läuft nur, wenn `read_only` ausgeschaltet ist.
 
+## SSD-Cache
+
+Übersicht → Pool → **SSD-Cache → Einrichten**. Neue Dateien werden zuerst auf die SSD geschrieben und
+später automatisch auf die Platten verschoben – dort greift die Duplizierung. Der Cache zählt nicht
+zum Pool-Speicher.
+
+- **SSD:** die System-SSD von Home Assistant (Ordner im Datenbereich der App, nicht in HA-Backups)
+  oder eine eigene, eingehängte SSD. Eine SSD kann von mehreren Pools genutzt werden.
+- **Verschieben:** nach X Minuten ohne Änderung, sofort ab Füllstand (Standard 80 %), täglich um eine
+  feste Uhrzeit und jederzeit mit „Jetzt verschieben“. Geöffnete Dateien werden ausgelassen.
+- **Grenzen:** Höchstgröße des Cache und Mindest-Freiplatz auf der SSD – bei der System-SSD genug für
+  Home Assistant frei lassen.
+- **Wichtig:** Bis zum Verschieben liegt eine Datei nur einmal (auf der SSD).
+- Ein-/Ausschalten oder SSD wechseln hängt den Pool kurz neu ein; beim Ausschalten wird vorher geleert.
+
 ## RAID
 
 Reiter **RAID** → „+ RAID anlegen“: Name, Typ (RAID 0/1/5/6/10 oder JBOD), Dateisystem und Platten
@@ -205,7 +220,7 @@ lassen sie sich nur lesend einbinden. Windows vorher vollständig herunterfahren
 1. ✅ Pool, DrivePool-Übernahme, SMART, Duplizierungs-Analyse, Weboberfläche
 2. ✅ Duplizierung herstellen, Echtzeit, Ausbalancieren, Platte entfernen (0.6.0)
 3. ✅ SMB-Freigaben und Benutzer (0.5.0)
-4. SSD-Cache (fest je Pool, geteilt oder System-SSD; Mover auf die Platten)
+4. ✅ SSD-Cache (0.12.0)
 5. ✅ RAID-Modi (0.11.0), ✅ HA-Integration (0.9.0)
 
 ✅ Ausfallsicherheit, Dateisystem-Prüfung, USV (0.7.0)

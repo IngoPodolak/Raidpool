@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.12.0
+- **SSD-Cache pro Pool**: neue Dateien landen zuerst auf der SSD und werden vom Mover auf die Platten
+  verschoben (nach Alter, ab Füllstand und täglich zur eingestellten Uhrzeit), dort dupliziert.
+- Cache-Ziel: **System-SSD von Home Assistant** (Ordner im Datenbereich, nicht in HA-Backups) oder eine
+  **eigene SSD**; eine SSD kann von mehreren Pools geteilt werden. Größenlimit und Mindest-Freiplatz.
+- Dateien in Benutzung werden nicht verschoben; Pause bei USV-Batteriebetrieb
+- Beim Ausschalten/Wechsel wird der Cache vorher geleert; MQTT-Sensoren und Taste „Cache verschieben“
+- Datei-Index wird nicht mehr in HA-Backups gesichert (wird neu aufgebaut)
+
 ## 0.11.0
 - Neuer Reiter **RAID**: Software-RAID (mdadm) anlegen – RAID 0, 1, 5, 6, 10 und JBOD – mit ext4 oder XFS.
   Nur leere bzw. freie Platten wählbar (keine Pool-, System- oder DrivePool-Platten), Bestätigung durch

@@ -128,6 +128,7 @@ function renderOverview() {
         ${running ? `<div class="progress"><div style="width:${prog}%"></div></div>` : ""}
         ${p.error ? `<ul class="warnings"><li>${esc(p.error)}</li></ul>` : ""}
         ${window.repPoolLine ? window.repPoolLine(p) : ""}
+        ${window.cacheLine ? window.cacheLine(p) : ""}
         <h3>Platten</h3>
         ${p.members.map((m) => {
           const u = m.usage; const w = u ? (100 * u.used) / u.total : 0;

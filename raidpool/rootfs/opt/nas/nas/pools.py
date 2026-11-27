@@ -19,6 +19,7 @@ class PoolManager:
         self.index = index
         self.errors = {}
         self.scan_threads = {}
+        self.cache = None          # CacheManager (wird von außen gesetzt)
 
     # ------------------------------------------------------------ Hilfen
     def mountpoint(self, pool):
@@ -32,6 +33,14 @@ class PoolManager:
             path = os.path.join(base, m["poolpart"]) if m.get("poolpart") not in (None, "", ".") else base
             res.append((m["uuid"], path, os.path.isdir(path)))
         return res
+
+    def base_mountpoint(self, pool):
+        """Pool ohne Cache (nur die Platten). Ohne aktiven Cache identisch mit dem Pool selbst."""
+        if not (self.cache and self.cache.active(pool)):
+            return self.mountpoint(pool)
+        if config.DEV:   # Test ohne mergerfs: erste Platte steht für den Basis-Pool
+            return next((b for _, b, ok in self.branches(pool) if ok), self.mountpoint(pool))
+        return os.path.join(config.POOL_MNT, ".base", pool["id"])
 
     def is_mounted(self, pool):
         mp = self.mountpoint(pool)
@@ -122,25 +131,47 @@ class PoolManager:
             self.errors[pool["id"]] = "Keine Platte des Pools verfügbar"
             raise RuntimeError(self.errors[pool["id"]])
         mp = self.mountpoint(pool)
+        cache_on = bool(self.cache and self.cache.active(pool))
+        hdd_mp = self.base_mountpoint(pool) if cache_on else mp
         os.makedirs(mp, exist_ok=True)
+        os.makedirs(hdd_mp, exist_ok=True)
         ro = self.options["read_only"]
         opts = ["defaults", "allow_other", "cache.files=off", "dropcacheonclose=true",
                 "category.create=mfs", "moveonenospc=true", "minfreespace=20G",
-                f"fsname=raidpool-{pool['id']}"]
+                f"fsname=raidpool-{pool['id']}" + ("-platten" if cache_on else "")]
         if ro:
             opts.append("ro")
         branch_str = ":".join(b[1] + ("=RO" if ro or not self.disks.is_writable(b[0]) else "=RW") for b in present)
-        code, _, err = run(["mergerfs", "-o", ",".join(opts), branch_str, mp], timeout=60)
-        if code != 0:
-            self.errors[pool["id"]] = err.strip() or "mergerfs-Fehler"
-            raise RuntimeError(self.errors[pool["id"]])
+        if not (hdd_mp in read_mounts()):
+            code, _, err = run(["mergerfs", "-o", ",".join(opts), branch_str, hdd_mp], timeout=60)
+            if code != 0:
+                self.errors[pool["id"]] = err.strip() or "mergerfs-Fehler"
+                raise RuntimeError(self.errors[pool["id"]])
+        if cache_on:
+            # Stufe 2: neue Dateien zuerst auf die SSD („ff“ = erster Zweig mit genug Platz), sonst direkt auf die Platten
+            from .cache import cache_dir, pool_cache_cfg  # noqa: PLC0415
+            cdir = cache_dir(pool)
+            os.makedirs(cdir, exist_ok=True)
+            reserve = int(pool_cache_cfg(pool)["min_free_gb"])
+            copts = ["defaults", "allow_other", "cache.files=off", "dropcacheonclose=true", "category.create=ff",
+                     "moveonenospc=true", f"minfreespace={reserve}G", f"fsname=raidpool-{pool['id']}"]
+            code, _, err = run(["mergerfs", "-o", ",".join(copts), f"{cdir}=RW:{hdd_mp}=RW", mp], timeout=60)
+            if code != 0:
+                self.errors[pool["id"]] = f"SSD-Cache: {err.strip() or 'mergerfs-Fehler'}"
+                log.error("%s – Pool läuft ohne Cache", self.errors[pool["id"]])
+                run(["umount", hdd_mp])
+                code, _, err = run(["mergerfs", "-o", ",".join(opts), branch_str, mp], timeout=60)
+                if code != 0:
+                    raise RuntimeError(err.strip() or "mergerfs-Fehler")
+                return
         self.errors.pop(pool["id"], None)
-        log.info("Pool %s eingehängt unter %s (%d/%d Platten)", pool["id"], mp, len(present), len(pool["members"]))
+        log.info("Pool %s eingehängt unter %s (%d/%d Platten%s)", pool["id"], mp, len(present), len(pool["members"]),
+                 ", mit SSD-Cache" if cache_on else "")
 
     # ------------------------------------------------------------ Zweige zur Laufzeit ändern
     def _ctl(self, pool, value):
         """mergerfs-Zweige ändern, ohne den Pool auszuhängen (offene Dateien/SMB bleiben bestehen)."""
-        ctl = os.path.join(self.mountpoint(pool), ".mergerfs")
+        ctl = os.path.join(self.base_mountpoint(pool), ".mergerfs")
         if config.DEV:
             return True
         try:
@@ -218,14 +249,18 @@ class PoolManager:
         return pool
 
     def unmount(self, pool):
-        if config.DEV or not self.is_mounted(pool):
+        if config.DEV:
             return
-        mp = self.mountpoint(pool)
-        code, _, err = run(["fusermount3", "-u", mp])
-        if code != 0:
-            code, _, err = run(["umount", mp])
-        if code != 0:
-            raise RuntimeError(err.strip() or "Pool wird noch benutzt")
+        mounts = read_mounts()
+        base = os.path.join(config.POOL_MNT, ".base", pool["id"])
+        for mp in (self.mountpoint(pool), base):
+            if mp not in mounts:
+                continue
+            code, _, err = run(["fusermount3", "-u", mp])
+            if code != 0:
+                code, _, err = run(["umount", mp])
+            if code != 0:
+                raise RuntimeError(err.strip() or "Pool wird noch benutzt")
 
     def mount_all(self):
         for p in list(self.settings.data["pools"]):

@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlparse
 
 from . import config, sensors
 from .disks import DiskManager
+from .cache import CacheManager
 from .dupes import DupeFinder
 from .health import Health
 from .mqtt import MqttBridge
@@ -26,7 +27,7 @@ from .smb import SambaManager
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 INGRESS_IP = "172.30.32.2"
-VERSION = "0.11.0"
+VERSION = "0.12.0"
 
 log = logging.getLogger("nas")
 
@@ -46,6 +47,8 @@ class App:
         self.smart = SmartMonitor(self.options)
         self.index = Index()
         self.pools = PoolManager(self.options, self.settings, self.disks, self.index)
+        self.cache = CacheManager(self.options, self.settings, self.pools, self.disks)
+        self.pools.cache = self.cache
         self.power = PowerManager(self.options, self.settings, self.disks)
         self.dupes = DupeFinder(self.options, self.settings, self.pools, self.index)
         self.smb = SambaManager(self.options, self.settings, self.pools)
@@ -96,7 +99,8 @@ class App:
             log.exception("Samba-Start fehlgeschlagen")
         threading.Thread(target=self.smb.watchdog_loop, daemon=True, name="smb-watchdog").start()
         for fn, name in ((self.rep.worker_loop, "rep-worker"), (self.rep.watch_loop, "rep-watch"),
-                         (self.rep.scheduler_loop, "rep-scheduler"), (self.health.monitor_loop, "health")):
+                         (self.rep.scheduler_loop, "rep-scheduler"), (self.health.monitor_loop, "health"),
+                         (self.cache.loop, "cache-mover")):
             threading.Thread(target=fn, daemon=True, name=name).start()
         threading.Thread(target=self.power.keepalive_loop, daemon=True, name="keepalive").start()
         threading.Thread(target=self.dupes.scheduler_loop, daemon=True, name="dupe-scheduler").start()
@@ -126,6 +130,7 @@ class App:
         states = []
         for p in self.settings.data["pools"]:
             st = self.pools.status(p)
+            st["cache"] = self.cache.status(p)
             for m in st["members"]:
                 if m["disk"]:
                     s = self.smart.get(m["disk"])
@@ -197,6 +202,9 @@ class App:
         if path == "raid/status":
             self.disks.refresh()
             return self.raid.status()
+        if path == "cache/targets":
+            self.disks.refresh()
+            return self.cache.targets()
         if path == "health/status":
             return self.health.status()
         if path == "health/ups_candidates":
@@ -261,6 +269,15 @@ class App:
             else:
                 raise KeyError(path)
             return {"ok": True}
+        if path in ("pools/cache", "pools/cache_flush"):
+            pool = self.settings.pool(body.get("pool"))
+            if not pool:
+                raise ValueError("Pool nicht gefunden")
+            if path == "pools/cache_flush":
+                self.cache.flush(pool)
+                return {"ok": True}
+            self.disks.refresh()
+            return self.cache.set_cfg(pool["id"], body)
         if path == "health/config":
             return self.health.set_cfg(body)
         if path == "health/check":
@@ -505,6 +522,7 @@ def main():
         app.rep.stop.set()
         app.health.stop.set()
         app.mqtt.stop.set()
+        app.cache.stop.set()
         app.smb.shutdown()
         threading.Thread(target=server.shutdown, daemon=True).start()
 

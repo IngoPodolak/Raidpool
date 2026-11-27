@@ -256,6 +256,16 @@ class MqttBridge:
                 device_class="problem", payload_on="ON", payload_off="OFF")
             add("binary_sensor", f"{o}_eingehaengt", "Eingehängt", dev, "ON" if p["mounted"] else "OFF",
                 device_class="connectivity", payload_on="ON", payload_off="OFF")
+            cs = p.get("cache") or {}
+            if (cs.get("config") or {}).get("enabled"):
+                u = cs.get("usage") or {}
+                add("sensor", f"{o}_cache_belegt", "SSD-Cache belegt", dev, round((u.get("bytes") or 0) / 1e9, 2), **gb)
+                add("sensor", f"{o}_cache_dateien", "SSD-Cache Dateien", dev, u.get("files") or 0,
+                    state_class="measurement", icon="mdi:lightning-bolt")
+                add("binary_sensor", f"{o}_cache_aktiv", "SSD-Cache aktiv", dev, "ON" if cs.get("active") else "OFF",
+                    payload_on="ON", payload_off="OFF", icon="mdi:flash")
+                button(f"{o}_cache_leeren", "SSD-Cache auf Platten verschieben", dev,
+                       lambda pid=pid: app.cache.flush(app.settings.pool(pid)), "mdi:transfer-down")
             button(f"{o}_scan", "Neu scannen", dev, lambda pid=pid: app.pools.start_scan(app.settings.pool(pid)),
                    "mdi:magnify-scan")
             button(f"{o}_abgleich", "Abgleich", dev, lambda pid=pid: rep.start_job("abgleich", pool_id=pid), "mdi:sync")
