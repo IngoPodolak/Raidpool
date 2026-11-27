@@ -64,16 +64,36 @@ class DiskManager:
         data = self._lsblk()
         mounts = read_mounts()
         disks = []
+        md_nodes = {}
+
+        def is_md(node):
+            t = (node.get("type") or "")
+            return t.startswith("raid") or t in ("linear", "md")
+
+        def collect_md(node):
+            for ch in node.get("children") or []:
+                if is_md(ch):
+                    md_nodes.setdefault(ch.get("name"), ch)
+                collect_md(ch)
+
+        for dev in data.get("blockdevices", []):
+            collect_md(dev)
+            if is_md(dev):
+                md_nodes.setdefault(dev.get("name"), dev)
         for dev in data.get("blockdevices", []):
             if dev.get("type") != "disk" or dev.get("name", "").startswith(("loop", "zram", "sr", "ram")):
                 continue
             parts = []
-            children = dev.get("children") or []
+            children = [c for c in (dev.get("children") or []) if not is_md(c)]
+            raid_member = (dev.get("fstype") == "linux_raid_member" or
+                           any(c.get("fstype") == "linux_raid_member" for c in children))
             # Platte ohne Partitionstabelle (Dateisystem direkt auf der Platte)
-            if not children and dev.get("fstype"):
+            if not children and dev.get("fstype") and dev.get("fstype") != "linux_raid_member":
                 children = [dict(dev, type="part")]
             system = False
             for ch in children:
+                if ch.get("fstype") == "linux_raid_member":
+                    continue
                 label = (ch.get("label") or "")
                 if label.startswith("hassos") or ch.get("mountpoint") in ("/", "/data", "/mnt/data"):
                     system = True
@@ -87,7 +107,20 @@ class DiskManager:
                 "transport": dev.get("tran") or "",
                 "rotational": str(dev.get("rota")) in ("1", "True", "true"),
                 "system": system,
+                "raid_member": raid_member,
                 "partitions": parts,
+            })
+        # Software-RAID-Verbünde als eigene „Platten“
+        for name, md in md_nodes.items():
+            kids = [c for c in (md.get("children") or []) if not is_md(c)]
+            if not kids:
+                kids = [dict(md, type="part")]
+            disks.append({
+                "name": name, "path": md.get("path") or f"/dev/{name}",
+                "model": f"RAID {str(md.get('type', '')).replace('raid', '')}".strip() if md.get("type") != "linear" else "JBOD",
+                "serial": f"md-{(md.get('uuid') or name)[:12]}", "size": int(md.get("size") or 0),
+                "transport": "md", "rotational": False, "system": False, "raid": True, "raid_member": False,
+                "partitions": [self._partition(c, mounts) for c in kids],
             })
         if self.net:
             disks += self.net.as_disks(_usage, find_poolparts)
@@ -265,6 +298,12 @@ class DiskManager:
             if d["system"] or d.get("network"):
                 continue
             for p in d["partitions"]:
+                if d.get("raid") and p["fstype"] in ("ext4", "xfs") and not p["mountpoint"] and p["uuid"] not in self.busy:
+                    try:
+                        self.mount(p["uuid"])
+                    except Exception as err:  # noqa: BLE001
+                        log.warning("RAID %s nicht einhängbar: %s", d["path"], err)
+                    continue
                 if p["fstype"] == "ntfs" and not p["mountpoint"] and p["size"] > 1 << 30 and p["uuid"] not in self.busy:
                     try:
                         self.mount(p["uuid"])

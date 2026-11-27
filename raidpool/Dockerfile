@@ -29,6 +29,7 @@ RUN apt-get update \
         xfsprogs \
         btrfs-progs \
         exfatprogs \
+        mdadm \
         hdparm \
         kmod \
     && rm -rf /var/lib/apt/lists/*

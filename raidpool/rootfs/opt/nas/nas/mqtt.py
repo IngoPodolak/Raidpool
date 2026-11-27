@@ -260,10 +260,27 @@ class MqttBridge:
                    "mdi:magnify-scan")
             button(f"{o}_abgleich", "Abgleich", dev, lambda pid=pid: rep.start_job("abgleich", pool_id=pid), "mdi:sync")
 
+        # ---- RAID-Verbünde
+        for a in app.raid.arrays():
+            dev = {"identifiers": [f"raidpool_raid_{_slug(a['name'])}"], "name": f"RAID {a['name']}",
+                   "manufacturer": "Linux md", "model": a["level"], "via_device": "raidpool_main"}
+            o = f"raidpool_raid_{_slug(a['name'])}"
+            state = "beeinträchtigt" if a["degraded"] else ({"resync": "synchronisiert", "recover": "Wiederaufbau",
+                                                             "check": "Prüfung", "repair": "Reparatur"}
+                                                            .get(a["sync_action"], "in Ordnung"))
+            add("sensor", f"{o}_zustand", "Zustand", dev, state, icon="mdi:harddisk-plus")
+            add("sensor", f"{o}_fortschritt", "Fortschritt", dev, a["sync_progress"] if a["sync_progress"] is not None else 0,
+                unit_of_measurement="%", state_class="measurement", icon="mdi:progress-clock")
+            add("binary_sensor", f"{o}_problem", "Problem", dev, "ON" if a["degraded"] else "OFF",
+                device_class="problem", payload_on="ON", payload_off="OFF")
+            add("sensor", f"{o}_groesse", "Größe", dev, round(a["size"] / 1e9, 2), unit_of_measurement="GB",
+                device_class="data_size", suggested_display_precision=1)
+            button(f"{o}_pruefen", "Prüfen", dev, lambda n=a["name"]: app.raid.check(n), "mdi:shield-check")
+
         # ---- Platten
         direct = {d["uuid"]: d for d in smb.direct_list()}
         for d in app.disks.disks:
-            if d["system"] or d.get("network"):
+            if d["system"] or d.get("network") or d.get("raid"):
                 continue
             key = _slug(d["serial"] or d["name"])
             dev = {"identifiers": [f"raidpool_disk_{key}"], "name": f"Platte {d['model'] or d['name']}",

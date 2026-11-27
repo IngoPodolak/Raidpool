@@ -38,6 +38,15 @@ verschiedenen Platten liegt, wie es das Soll ihres Ordners vorgibt.
 - Bei der Übernahme eines DrivePools wird das Soll automatisch auf die erkannte Duplizierung gesetzt.
 - Läuft nur, wenn `read_only` ausgeschaltet ist.
 
+## RAID
+
+Reiter **RAID** → „+ RAID anlegen“: Name, Typ (RAID 0/1/5/6/10 oder JBOD), Dateisystem und Platten
+wählen. **Alle Daten auf den gewählten Platten werden gelöscht** – zur Bestätigung den Namen eintippen.
+Platten aus Pools, mit DrivePool-Ordnern oder eingehängte Platten werden nicht angeboten.
+Der Verbund ist sofort nutzbar; die Erstsynchronisation läuft im Hintergrund. Danach erscheint er
+unter „Platten“ und kann in einen Pool aufgenommen und so freigegeben werden.
+Ob RAID möglich ist, hängt vom Linux-Kern des Systems ab – die App zeigt es an.
+
 ## Ausfall, Neustart, Stromausfall
 
 - **Platte fällt aus:** wird nach ca. 20 s erkannt, aus dem Pool gelöst, in HA gemeldet; Dateien mit
@@ -197,7 +206,7 @@ lassen sie sich nur lesend einbinden. Windows vorher vollständig herunterfahren
 2. ✅ Duplizierung herstellen, Echtzeit, Ausbalancieren, Platte entfernen (0.6.0)
 3. ✅ SMB-Freigaben und Benutzer (0.5.0)
 4. SSD-Cache (fest je Pool, geteilt oder System-SSD; Mover auf die Platten)
-5. RAID-Modi (mdadm), eigene HA-Integration
+5. ✅ RAID-Modi (0.11.0), ✅ HA-Integration (0.9.0)
 
 ✅ Ausfallsicherheit, Dateisystem-Prüfung, USV (0.7.0)
 

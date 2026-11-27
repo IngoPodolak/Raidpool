@@ -19,13 +19,14 @@ from .index import Index
 from .netshares import NetShares
 from .pools import PoolManager
 from .power import PowerManager
+from .raid import RaidManager
 from .replicate import Replicator
 from .smart import SmartMonitor
 from .smb import SambaManager
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 INGRESS_IP = "172.30.32.2"
-VERSION = "0.10.1"
+VERSION = "0.11.0"
 
 log = logging.getLogger("nas")
 
@@ -39,6 +40,7 @@ class App:
             os.makedirs(d, exist_ok=True)
         self.settings = config.Settings()
         self.disks = DiskManager(self.options)
+        self.raid = RaidManager(self.options, self.settings, self.disks)
         self.net = NetShares(self.options, self.settings)
         self.disks.net = self.net
         self.smart = SmartMonitor(self.options)
@@ -50,6 +52,7 @@ class App:
         self.rep = Replicator(self.options, self.settings, self.pools, self.index)
         self.health = Health(self.options, self.settings, self.disks, self.pools, self.rep, self.dupes)
         self.version = VERSION
+        self.health.raid = self.raid
         self.mqtt = MqttBridge(self)
         self.mqtt.cleanup_previous()
         self.stop = threading.Event()
@@ -74,6 +77,11 @@ class App:
             log.error("Schutzmodus ist aktiv – ohne vollen Zugriff können keine Platten eingebunden werden. "
                       "Bitte in Home Assistant bei der App RAIDPool den Schutzmodus ausschalten und neu starten.")
         self.net.auto_mount()
+        try:
+            self.raid.check_support()
+            self.raid.assemble()            # vorhandene RAID-Verbünde zusammensetzen
+        except Exception:  # noqa: BLE001
+            log.exception("RAID-Start")
         if self.options["auto_mount_ntfs"]:
             self.disks.auto_mount()
         else:
@@ -186,6 +194,9 @@ class App:
             if mode == "under":
                 return self.index.under_files(pool, fpath, limit)
             return self.index.files(pid, fpath, mode, limit)
+        if path == "raid/status":
+            self.disks.refresh()
+            return self.raid.status()
         if path == "health/status":
             return self.health.status()
         if path == "health/ups_candidates":
@@ -234,6 +245,21 @@ class App:
                     raise ValueError(f"Platte gehört zu Pool '{p['name']}' – zuerst Pool aushängen")
             self.disks.unmount(body["uuid"])
             self.disks.refresh()
+            return {"ok": True}
+        if path.startswith("raid/"):
+            self.disks.refresh()
+            a = path[5:]
+            if a == "create":
+                self.raid.create(body.get("name", "").strip(), body.get("level"), body.get("devices") or [],
+                                 body.get("fs", "ext4"), body.get("confirm", ""))
+            elif a == "check":
+                self.raid.check(body["name"])
+            elif a == "replace":
+                self.raid.replace(body["name"], body.get("failed"), body["device"])
+            elif a == "delete":
+                self.raid.delete(body["name"], body.get("confirm", ""))
+            else:
+                raise KeyError(path)
             return {"ok": True}
         if path == "health/config":
             return self.health.set_cfg(body)

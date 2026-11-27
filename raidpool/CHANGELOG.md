@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.11.0
+- Neuer Reiter **RAID**: Software-RAID (mdadm) anlegen – RAID 0, 1, 5, 6, 10 und JBOD – mit ext4 oder XFS.
+  Nur leere bzw. freie Platten wählbar (keine Pool-, System- oder DrivePool-Platten), Bestätigung durch
+  Eintippen des Namens. Anzeige des nutzbaren Speichers schon bei der Auswahl.
+- Status mit Erstsynchronisation/Wiederaufbau in %, Platten-Zustand, Prüfung, Platte ersetzen, Löschen
+- Verbünde werden beim Start automatisch zusammengesetzt und eingehängt, erscheinen unter „Platten“
+  und können in Pools aufgenommen werden
+- Meldung in HA, wenn ein Verbund beeinträchtigt ist; MQTT-Gerät je Verbund (Zustand, Fortschritt, Problem, Prüfen)
+
 ## 0.10.1
 - Erkennt den **Schutzmodus** der App: Hinweis in der Oberfläche und im Protokoll, statt der
   irreführenden Meldung zum Windows-Schnellstart

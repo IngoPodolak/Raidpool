@@ -54,6 +54,8 @@ class Health:
         self.check_log = collections.deque(maxlen=2000)
         self.smart_tests = {}            # device -> Status
         self.disks.dirty_policy = self.cfg()["dirty_policy"]
+        self.raid = None                 # RaidManager (wird von außen gesetzt)
+        self.raid_seen = {}              # name -> letzter Zustand (für Meldungen)
 
     # ------------------------------------------------------------ Einstellungen
     def cfg(self):
@@ -107,6 +109,7 @@ class Health:
             try:
                 self._check_members()
                 self._check_ups()
+                self._check_raid()
             except Exception:  # noqa: BLE001
                 log.exception("Überwachung")
 
@@ -174,6 +177,24 @@ class Health:
                 self.rep.start_job("abgleich", pool_id=pool["id"])
         except ValueError:
             pass
+
+    def _check_raid(self):
+        if not self.raid:
+            return
+        for a in self.raid.arrays():
+            key = "degraded" if a["degraded"] else ("sync" if a["sync_action"] not in ("idle", "") else "ok")
+            prev = self.raid_seen.get(a["name"])
+            self.raid_seen[a["name"]] = key
+            if prev == key or prev is None and key != "degraded":
+                continue
+            if key == "degraded":
+                self.notify("RAID beeinträchtigt", f"Im Verbund **{a['name']}** ({a['level']}) fehlen {a['degraded']} "
+                            f"Platte(n). Die Daten sind noch erreichbar, aber ohne volle Ausfallsicherheit – bitte "
+                            f"Platte ersetzen.", nid=f"raid_{a['name']}")
+            elif prev == "degraded" and key in ("ok", "sync"):
+                self.notify("RAID wird wiederhergestellt" if key == "sync" else "RAID wieder vollständig",
+                            f"Verbund **{a['name']}**: {'Wiederaufbau läuft' if key == 'sync' else 'alle Platten in Ordnung'}.",
+                            nid=f"raid_{a['name']}", level="info")
 
     # ------------------------------------------------------------ USV (NUT-Integration in HA)
     def _state(self, entity):

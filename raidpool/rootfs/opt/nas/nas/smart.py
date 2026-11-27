@@ -122,7 +122,7 @@ class SmartMonitor:
 
     def refresh_all(self, disks, wake=None):
         for d in disks:
-            if d.get("network"):
+            if d.get("network") or d.get("raid"):
                 continue
             try:
                 self.read(d["path"], wake)

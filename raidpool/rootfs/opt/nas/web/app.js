@@ -394,8 +394,9 @@ async function refresh() {
   else if (state.tab === "disks") renderDisks();
   else if (state.tab === "dup") await renderDup();
   else if (state.tab === "shares") await window.renderShares();
+  else if (state.tab === "raid") await window.renderRaid();
   else await window.renderDupes();
-  const scanning = (state.health && state.health.check && state.health.check.running) || state.status.pools.some((p) => p.scan && p.scan.status === "läuft") || (state.rep && ((state.rep.job && state.rep.job.running) || state.rep.current || state.rep.queue)) || (state.tab === "dupes" && window.dupesRunning && window.dupesRunning());
+  const scanning = (state.tab === "raid" && window.raidBusy && window.raidBusy()) || (state.health && state.health.check && state.health.check.running) || state.status.pools.some((p) => p.scan && p.scan.status === "läuft") || (state.rep && ((state.rep.job && state.rep.job.running) || state.rep.current || state.rep.queue)) || (state.tab === "dupes" && window.dupesRunning && window.dupesRunning());
   clearTimeout(state.timer);
   state.timer = setTimeout(refresh, scanning ? 3000 : 30000);
 }
