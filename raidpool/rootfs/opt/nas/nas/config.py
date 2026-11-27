@@ -18,6 +18,8 @@ POOL_MNT = ROOT + "/mnt/nas/pools"
 DEFAULT_OPTIONS = {
     "read_only": True,
     "auto_mount_ntfs": True,
+    "power_default": "always",
+    "spindown_minutes": 60,
     "smart_interval_minutes": 30,
     "smart_wake_disks": False,
     "publish_sensors": True,

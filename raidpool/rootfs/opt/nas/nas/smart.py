@@ -27,6 +27,8 @@ def parse(data):
         "temperature": (data.get("temperature") or {}).get("current"),
         "power_on_hours": (data.get("power_on_time") or {}).get("hours"),
         "power_cycles": data.get("power_cycle_count"),
+        "start_stop": None,
+        "load_cycles": None,
         "attributes": [],
         "warnings": [],
         "nvme": None,
@@ -44,6 +46,10 @@ def parse(data):
             "failing": bool((a.get("when_failed") or "").strip()),
         }
         res["attributes"].append(entry)
+        if a.get("id") == 4:
+            res["start_stop"] = raw
+        elif a.get("id") == 193:
+            res["load_cycles"] = raw
         if a.get("id") in CRITICAL_ATTRS and raw:
             if a["id"] == 188 and raw > 0xFFFF:  # herstellerspezifisch gepackt
                 continue
@@ -62,6 +68,8 @@ def parse(data):
             res["warnings"].append(f"Medienfehler: {nv['media_errors']}")
         if (nv.get("percentage_used") or 0) >= 90:
             res["warnings"].append(f"Verschleiß {nv['percentage_used']} %")
+    if (res["load_cycles"] or 0) > 300000:
+        res["warnings"].append(f"Sehr viele Kopf-Parkvorgänge: {res['load_cycles']} (Nennwert meist 300.000–600.000)")
     if res["passed"] is False:
         res["warnings"].insert(0, "SMART-Gesamtstatus: FEHLER")
     res["state"] = "fehler" if res["passed"] is False else ("warnung" if res["warnings"] else "ok")
@@ -79,7 +87,7 @@ class SmartMonitor:
             wake = self.options["smart_wake_disks"]
         if config.DEV:
             result = {"available": True, "passed": True, "temperature": 34, "power_on_hours": 12345,
-                      "power_cycles": 100, "attributes": [], "warnings": [], "nvme": None,
+                      "power_cycles": 100, "start_stop": 412, "load_cycles": 2380, "attributes": [], "warnings": [], "nvme": None,
                       "state": "ok", "standby": False, "updated": int(time.time())}
             with self.lock:
                 self.cache[device] = result

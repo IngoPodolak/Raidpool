@@ -1,5 +1,5 @@
 name: HA RAIDPool
-version: "0.1.0"
+version: "0.2.0"
 slug: raidpool
 description: >-
   NAS mit Festplatten-Pool wie StableBit DrivePool (Duplizierung pro Ordner),
@@ -36,6 +36,8 @@ map:
 options:
   read_only: true
   auto_mount_ntfs: true
+  power_default: always
+  spindown_minutes: 60
   smart_interval_minutes: 30
   smart_wake_disks: false
   publish_sensors: true
@@ -44,6 +46,8 @@ options:
 schema:
   read_only: bool
   auto_mount_ntfs: bool
+  power_default: list(always|vendor|spindown)
+  spindown_minutes: int(10,330)
   smart_interval_minutes: int(5,1440)
   smart_wake_disks: bool
   publish_sensors: bool

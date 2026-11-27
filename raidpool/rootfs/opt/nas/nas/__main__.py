@@ -14,11 +14,12 @@ from . import config, sensors
 from .disks import DiskManager
 from .index import Index
 from .pools import PoolManager
+from .power import PowerManager
 from .smart import SmartMonitor
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 INGRESS_IP = "172.30.32.2"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 log = logging.getLogger("nas")
 
@@ -35,6 +36,7 @@ class App:
         self.smart = SmartMonitor(self.options)
         self.index = Index()
         self.pools = PoolManager(self.options, self.settings, self.disks, self.index)
+        self.power = PowerManager(self.options, self.settings, self.disks)
         self.stop = threading.Event()
 
     def start(self):
@@ -43,6 +45,8 @@ class App:
         else:
             self.disks.refresh()
         self.pools.mount_all()
+        self.power.apply_all()
+        threading.Thread(target=self.power.keepalive_loop, daemon=True, name="keepalive").start()
         threading.Thread(target=self._smart_loop, daemon=True, name="smart").start()
         if self.options["publish_sensors"]:
             threading.Thread(target=self._sensor_loop, daemon=True, name="sensors").start()
@@ -50,6 +54,7 @@ class App:
     def _smart_loop(self):
         while not self.stop.is_set():
             self.smart.refresh_all(self.disks.disks)
+            self.power.apply_all()   # z. B. nach Neuanschluss einer Platte erneut setzen
             self.stop.wait(self.options["smart_interval_minutes"] * 60)
 
     def _sensor_loop(self):
@@ -80,7 +85,7 @@ class App:
                 member_of[m["uuid"]] = p["name"]
         out = []
         for d in self.disks.disks:
-            dd = dict(d, smart=self.smart.get(d["path"]))
+            dd = dict(d, smart=self.smart.get(d["path"]), power=self.power.info(d))
             dd["partitions"] = [dict(pt, pool=member_of.get(pt["uuid"])) for pt in d["partitions"]]
             out.append(dd)
         return out
@@ -151,6 +156,9 @@ class App:
                     raise ValueError(f"Platte gehört zu Pool '{p['name']}' – zuerst Pool aushängen")
             self.disks.unmount(body["uuid"])
             self.disks.refresh()
+            return {"ok": True}
+        if path == "disks/power":
+            self.power.set(body["key"], body["mode"], body.get("minutes"))
             return {"ok": True}
         if path == "smart/refresh":
             self.smart.refresh_all(self.disks.disks, wake=bool(body.get("wake")))
@@ -267,6 +275,7 @@ def main():
 
     def shutdown(*_):
         app.stop.set()
+        app.power.stop.set()
         threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGTERM, shutdown)

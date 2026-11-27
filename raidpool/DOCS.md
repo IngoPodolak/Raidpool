@@ -20,6 +20,20 @@ Festplatten-Pool für Home Assistant nach dem Vorbild von StableBit DrivePool.
 Die Dateien bleiben ganz normale Dateien auf NTFS – jede Platte ist an einem Windows-PC
 weiterhin lesbar, und DrivePool kann die Platten jederzeit wieder übernehmen.
 
+## Energie / Dauerbetrieb
+
+Pro Platte einstellbar unter **Platten → Energie** (Standard über die Option `power_default`):
+
+- **Immer an (Dauerbetrieb)** – Standard. Kein Standby, Kopfparken aus, alle 3 Minuten ein
+  kurzer Lesezugriff direkt auf die Platte. Das hält auch USB-Gehäuse wach, die sich unabhängig
+  vom Betriebssystem abschalten.
+- **Herstellervorgabe** – nichts wird verändert.
+- **Abschalten nach …** – Standby nach 30 min bis 5 h.
+
+Zum Beobachten gibt es pro Platte die Zähler „Anläufe“ und „Kopf-Parkvorgänge“
+(auch als Sensoren). Steigen die Parkvorgänge im Dauerbetrieb trotzdem schnell, unterstützt die
+Platte das Abschalten des Kopfparkens nicht über APM (z. B. WD Green – dort hilft `idle3-tools`).
+
 ## Sicherheit
 
 `read_only: true` (Standard) bindet **alles nur lesend** ein. Auf den Platten wird dann nichts
@@ -42,6 +56,8 @@ lassen sie sich nur lesend einbinden. Windows vorher vollständig herunterfahren
 |---|---|
 | `read_only` | Alles nur lesend einbinden (empfohlen für den Anfang) |
 | `auto_mount_ntfs` | NTFS-Platten beim Start einhängen, um DrivePool-Ordner zu finden |
+| `power_default` | Standard-Energiemodus: `always`, `vendor` oder `spindown` |
+| `spindown_minutes` | Zeit bis zum Abschalten im Modus `spindown` |
 | `smart_interval_minutes` | Abstand der SMART-Abfragen |
 | `smart_wake_disks` | Schlafende Platten für SMART wecken |
 | `publish_sensors` | Sensoren an Home Assistant senden |

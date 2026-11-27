@@ -67,7 +67,15 @@ def publish(pool_states, disks, smart):
             _post(f"sensor.raidpool_disk_{key}_temperatur", s["temperature"], {
                 "friendly_name": f"RAIDPool {label} Temperatur", "unit_of_measurement": "°C",
                 "device_class": "temperature", "state_class": "measurement"})
+        if s.get("load_cycles") is not None:
+            _post(f"sensor.raidpool_disk_{key}_kopf_parkvorgaenge", s["load_cycles"], {
+                "friendly_name": f"RAIDPool {label} Kopf-Parkvorgänge", "icon": "mdi:harddisk-plus",
+                "state_class": "total_increasing"})
+        if s.get("start_stop") is not None:
+            _post(f"sensor.raidpool_disk_{key}_anlaeufe", s["start_stop"], {
+                "friendly_name": f"RAIDPool {label} Anläufe", "icon": "mdi:restart",
+                "state_class": "total_increasing"})
         _post(f"sensor.raidpool_disk_{key}_zustand", s.get("state") or "unbekannt", {
             "friendly_name": f"RAIDPool {label} Zustand", "icon": "mdi:harddisk",
             "warnungen": s.get("warnings"), "betriebsstunden": s.get("power_on_hours"),
-            "standby": s.get("standby"), "seriennummer": disk["serial"], "groesse_gb": _gb(disk["size"])})
+            "standby": s.get("standby"), "anlaeufe": s.get("start_stop"), "kopf_parkvorgaenge": s.get("load_cycles"), "seriennummer": disk["serial"], "groesse_gb": _gb(disk["size"])})

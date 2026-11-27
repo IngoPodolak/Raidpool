@@ -155,6 +155,23 @@ window.openCreate = async (adopt) => {
 };
 
 // ---------------------------------------------------------------- Platten
+const POWER_LABEL = { always: "Immer an (Dauerbetrieb)", vendor: "Herstellervorgabe", spindown: "Abschalten" };
+function powerSelect(d) {
+  const p = d.power || {}; const def = state.status.options;
+  const defLabel = def.power_default === "spindown" ? `Abschalten nach ${def.spindown_minutes} min` : POWER_LABEL[def.power_default];
+  const cur = p.inherited ? "default" : p.mode === "spindown" ? "spindown:" + p.minutes : p.mode;
+  const opts = [["default", `Standard (${defLabel})`], ["always", POWER_LABEL.always], ["vendor", POWER_LABEL.vendor],
+    ...[30, 60, 120, 180, 300].map((m) => ["spindown:" + m, `Abschalten nach ${m >= 60 ? m / 60 + " h" : m + " min"}`])];
+  if (cur.startsWith("spindown:") && !opts.some((o) => o[0] === cur)) opts.push([cur, `Abschalten nach ${p.minutes} min`]);
+  return `<div class="row spread" style="margin-top:10px"><span class="small muted">Energie</span>
+    <select onchange='setPower(${js(p.key)}, this.value)'>${opts.map(([v, l]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div>
+    ${p.mode === "always" ? '<div class="muted small">Kein Standby, Kopfparken aus, Platte wird alle 3 min kurz gelesen.</div>' : ""}
+    ${p.error ? `<div class="muted small">Hinweis: ${esc(p.error)}${p.mode === "always" ? " – Wachhalten durch Lesen ist aktiv." : ""}</div>` : ""}`;
+}
+window.setPower = (key, v) => {
+  const [mode, minutes] = v.split(":");
+  act(() => api("disks/power", { key, mode, minutes: minutes ? +minutes : undefined }), "Energieeinstellung gespeichert");
+};
 async function loadDisks() { state.disks = await api("disks"); }
 function renderDisks() {
   const el = $("#tab-disks");
@@ -167,7 +184,10 @@ function renderDisks() {
         <div class="muted small">${esc(d.path)} · ${fmtBytes(d.size)} · ${d.rotational ? "HDD" : "SSD"}${d.transport ? " · " + esc(d.transport.toUpperCase()) : ""}${d.serial ? " · SN " + esc(d.serial) : ""}</div>
         ${s && s.available ? `<div class="stats"><div class="stat"><b>${s.temperature ?? "–"} °C</b><span>Temperatur</span></div>
           <div class="stat"><b>${fmtNum(s.power_on_hours)}</b><span>Betriebsstunden</span></div>
-          ${s.nvme ? `<div class="stat"><b>${s.nvme.percentage_used ?? "–"} %</b><span>Verschleiß</span></div>` : `<div class="stat"><b>${fmtNum(s.power_cycles)}</b><span>Einschaltvorgänge</span></div>`}</div>` : ""}
+          ${s.nvme ? `<div class="stat"><b>${s.nvme.percentage_used ?? "–"} %</b><span>Verschleiß</span></div>` : `<div class="stat"><b>${fmtNum(s.power_cycles)}</b><span>Einschaltvorgänge</span></div>`}
+          ${s.start_stop != null ? `<div class="stat"><b>${fmtNum(s.start_stop)}</b><span>Anläufe (Motor)</span></div>` : ""}
+          ${s.load_cycles != null ? `<div class="stat"><b style="color:${s.load_cycles > 300000 ? "var(--bad)" : "inherit"}">${fmtNum(s.load_cycles)}</b><span>Kopf-Parkvorgänge</span></div>` : ""}</div>` : ""}
+        ${d.system ? "" : powerSelect(d)}
         ${s && !s.available ? `<div class="muted small">SMART nicht lesbar${s.reason ? ": " + esc(s.reason) : ""}. Unter Proxmox den SATA-Controller per PCIe durchreichen, nicht nur die einzelne Platte.</div>` : ""}
         ${s && s.warnings && s.warnings.length ? `<ul class="warnings">${s.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}
         ${s && s.attributes && s.attributes.length ? `<details><summary class="small muted">Alle SMART-Attribute</summary><div class="table-wrap"><table class="small"><tr><th>ID</th><th>Attribut</th><th class="num">Wert</th><th class="num">Schwelle</th><th class="num">Rohwert</th></tr>
