@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.19.2
+- Live-Ansicht zeigt die CPU-Last je Programm im Add-on (Samba, mergerfs, NTFS-Treiber, RAIDPool) –
+  hilft zu sehen, was einen Kopiervorgang bremst.
+- Der Abgleich nach dem Start läuft erst nach 15 Minuten (nicht mehr direkt nach jedem Update).
+
 ## 0.19.1
 - Während der Mover den SSD-Cache auf die Platten verteilt (inkl. aller Kopien), ruht die
   Platte-zu-Platte-Duplizierung; Scans, Abgleich, Ausbalancieren und Duplikatsuche pausieren ebenfalls.

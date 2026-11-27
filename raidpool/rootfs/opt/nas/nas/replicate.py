@@ -909,6 +909,7 @@ class Replicator:
     def scheduler_loop(self):
         last = {}
         startup_done = False
+        started = time.time()
         while not self.stop.wait(30):
             cfg = self.cfg()
             if not cfg["enabled"] or not self.writable():
@@ -918,7 +919,9 @@ class Replicator:
             day = now.strftime("%Y-%m-%d")
             busy = self.job and self.job.get("running")
             try:
-                if not startup_done and not busy:
+                if not startup_done and not busy and time.time() - started > 900:
+                    # Abgleich nach dem Start (z. B. nach Stromausfall) erst nach 15 Minuten – nicht direkt
+                    # nach jedem Update mitten in laufende Kopiervorgänge
                     startup_done = True
                     self.start_job("abgleich")
                 elif hm == cfg["reconcile_time"] and last.get("abgleich") != day and not busy:

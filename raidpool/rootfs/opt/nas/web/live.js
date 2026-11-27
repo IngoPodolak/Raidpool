@@ -53,7 +53,8 @@ function liveHtml(d) {
         <h3>Jetzt aktiv</h3>
         ${act.length ? act.join("") : '<div class="small muted">Gerade läuft nichts im Hintergrund.</div>'}
         <h3>Auslastung</h3>
-        <div class="lv-meters">${meter("CPU gesamt", s.cpu || 0)}${meter("Arbeitsspeicher", s.mem || 0)}${meter("RAIDPool selbst", s.self_cpu || 0)}</div>
+        <div class="lv-meters">${meter("CPU gesamt", s.cpu || 0, s.cores ? s.cores + " Kerne" : "")}${meter("Arbeitsspeicher", s.mem || 0)}${meter("RAIDPool (Verwaltung)", s.self_cpu || 0)}</div>
+        ${(s.procs || []).length ? `<div class="small muted" style="margin-top:6px">CPU je Programm im Add-on (100 % = ein Kern):<br>${s.procs.map((p) => `${esc(p.name)} <b>${p.cpu} %</b>`).join(" · ")}</div>` : ""}
       </div>
       <div>
         <h3>Platten</h3>

@@ -43,7 +43,19 @@ class LiveMonitor:
             own = int(f[11]) + int(f[12])          # utime + stime (Ticks)
         except (OSError, IndexError, ValueError):
             own = 0
-        return time.time(), idle, total, disks, own
+        procs = {}
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit():
+                continue
+            try:
+                with open(f"/proc/{pid}/stat", encoding="utf-8") as fh:
+                    raw = fh.read()
+                name = raw[raw.index("(") + 1:raw.rindex(")")]
+                f = raw.rsplit(")", 1)[1].split()
+                procs[pid] = (name, int(f[11]) + int(f[12]))
+            except (OSError, ValueError, IndexError):
+                continue
+        return time.time(), idle, total, disks, own, procs
 
     def loop(self):
         tick = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
@@ -52,8 +64,8 @@ class LiveMonitor:
             try:
                 cur = self._read()
                 if self._prev:
-                    t0, i0, tt0, d0, o0 = self._prev
-                    t1, i1, tt1, d1, o1 = cur
+                    t0, i0, tt0, d0, o0, p0 = self._prev
+                    t1, i1, tt1, d1, o1, p1 = cur
                     dt = max(t1 - t0, 0.1)
                     cpu = 100 * (1 - (i1 - i0) / max(tt1 - tt0, 1))
                     disks = {}
@@ -73,9 +85,16 @@ class LiveMonitor:
                     except OSError:
                         pass
                     self_cpu = 100 * (o1 - o0) / tick / dt / ncpu
+                    # CPU je Programm im Add-on (Samba, mergerfs, NTFS-Treiber, RAIDPool) – in % eines Kerns
+                    byname = {}
+                    for pid, (name, ticks) in p1.items():
+                        if pid in p0 and p0[pid][0] == name:
+                            byname[name] = byname.get(name, 0) + (ticks - p0[pid][1])
+                    procs = sorted(({"name": n, "cpu": round(100 * v / tick / dt, 1)} for n, v in byname.items()
+                                    if v > 0), key=lambda x: -x["cpu"])[:6]
                     with self.lock:
-                        self.data = {"cpu": round(cpu, 1), "mem": round(mem, 1),
-                                     "self_cpu": round(self_cpu, 1), "disks": disks}
+                        self.data = {"cpu": round(cpu, 1), "mem": round(mem, 1), "cores": ncpu,
+                                     "self_cpu": round(self_cpu, 1), "disks": disks, "procs": procs}
                     self._copy_speed(dt)
                     self._detect_copy(disks)
                 self._prev = cur
