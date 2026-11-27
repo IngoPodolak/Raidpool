@@ -118,7 +118,7 @@ class Index:
             try:
                 with os.scandir(full) as it:
                     for e in it:
-                        if not rel_dir and e.name in SKIP_NAMES:
+                        if (not rel_dir and e.name in SKIP_NAMES) or e.name == ".nas-recycle":
                             continue
                         rel = f"{rel_dir}/{e.name}" if rel_dir else e.name
                         try:

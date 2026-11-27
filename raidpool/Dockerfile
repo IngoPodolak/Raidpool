@@ -12,6 +12,11 @@ RUN apt-get update \
         fuse3 \
         ntfs-3g \
         cifs-utils \
+        samba \
+        samba-common-bin \
+        samba-vfs-modules \
+        wsdd \
+        procps \
         nfs-common \
         smartmontools \
         util-linux \

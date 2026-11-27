@@ -349,6 +349,7 @@ async function refresh() {
   if (state.tab === "overview") renderOverview();
   else if (state.tab === "disks") renderDisks();
   else if (state.tab === "dup") await renderDup();
+  else if (state.tab === "shares") await window.renderShares();
   else await window.renderDupes();
   const scanning = state.status.pools.some((p) => p.scan && p.scan.status === "läuft") || (state.tab === "dupes" && window.dupesRunning && window.dupesRunning());
   clearTimeout(state.timer);

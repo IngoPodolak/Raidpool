@@ -148,3 +148,11 @@ details.ign > summary::before { content: "🙈"; }
 .ign-row { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
 .ellip { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #selbar[hidden] { display: none; }
+.acc-table { border: 1px solid var(--line); border-radius: 10px; padding: 2px 10px; }
+.acc-row { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.acc-table .acc-row:last-child { border-bottom: 0; }
+.seg.acc button { padding: 5px 10px; font-size: 13px; }
+.seg.acc button.active.acc-none { background: var(--muted); }
+.seg.acc button.active.acc-ro { background: var(--warn); }
+.seg.acc button.active.acc-rw { background: var(--ok); }
+input.pw { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); }

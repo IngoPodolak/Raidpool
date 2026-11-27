@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0
+- Neuer Reiter **Freigaben** (SMB/Samba): ganze Pools und einzelne Ordner freigeben – auch beides
+  gleichzeitig. Ordnerauswahl per Popup, fehlende Ordner werden angelegt.
+- Rechte pro Freigabe und Benutzer (kein Zugriff / lesen / lesen + schreiben) und optionaler Gastzugriff
+- Benutzer aus Home Assistant übernehmen (eigenes SMB-Passwort) oder reine SMB-Benutzer anlegen,
+  Benutzer sperren, Passwort ändern
+- Optionen: im Netzwerk sichtbar, Papierkorb (`.nas-recycle`), macOS-Optimierung, Time Machine mit Größenlimit
+- Anzeige in der Windows-Netzwerkumgebung (WS-Discovery), aktive Verbindungen, Server-Einstellungen
+- Das Add-on nutzt jetzt das Host-Netzwerk (für Port 445). Läuft das offizielle Samba-Add-on, wird das erkannt.
+
 ## 0.4.0
 - **Netzwerkfreigaben** (SMB/CIFS und NFS) einbinden – Reiter Platten → „+ Netzwerkfreigabe“.
   Passwörter werden getrennt in `/data` gespeichert (nicht im sichtbaren Konfigurationsordner).

@@ -33,6 +33,20 @@ NFS-Freigaben einbinden. Sie verhalten sich danach wie eine Platte:
 Mit `read_only: true` werden auch Freigaben nur lesend verbunden. Netzwerkfreigaben haben keine
 SMART-Werte und keine Energieeinstellung.
 
+## Freigaben (SMB)
+
+Reiter **Freigaben**: den **ganzen Pool** und/oder **einzelne Ordner** daraus als Netzwerkfreigabe
+anbieten, z. B. `\\homeassistant\DrivePool` und zusätzlich `\\homeassistant\Filme`.
+
+- **Rechte** pro Freigabe und Benutzer: kein Zugriff, lesen oder lesen + schreiben; optional Gastzugriff.
+- **Benutzer**: aus Home Assistant übernehmen oder reine SMB-Benutzer (z. B. Fernseher) anlegen.
+  Home Assistant gibt Passwörter nicht heraus, daher wird für SMB ein eigenes Passwort vergeben.
+- **Papierkorb**: über die Freigabe gelöschte Dateien landen in `.nas-recycle/<benutzer>`.
+- **macOS / Time Machine**: Optimierung für Mac und Time-Machine-Ziel mit Größenlimit.
+- **Wichtig:** Das offizielle Samba-Add-on belegt ebenfalls Port 445 – beide gleichzeitig geht nicht.
+  Ist es aktiv, zeigt der Reiter einen Hinweis; dort stoppen und hier „Starten“.
+- Mit `read_only: true` sind alle Freigaben nur lesbar.
+
 ## Duplikate
 
 Reiter **Duplikate** findet Dateien mit identischem Inhalt – egal ob gleicher oder anderer Name.

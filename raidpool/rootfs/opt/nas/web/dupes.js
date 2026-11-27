@@ -279,32 +279,34 @@ window.pickExclude = () => openFolderPicker((pool, path) => {
   act(() => saveExcludes(list.concat([v])), "Ordner ausgeschlossen");
 });
 
-async function openFolderPicker(onPick, pool = null, path = "") {
+async function openFolderPicker(onPick, pool = null, path = "", opts = {}) {
+  const o = Object.assign({ title: "Ordner ausschließen", ok: "Diesen Ordner ausschließen", fixedPool: false, allowRoot: false, markExcluded: true }, opts);
   let data;
   try { data = await api(`browse?pool=${encodeURIComponent(pool || "")}&path=${encodeURIComponent(path)}`); }
   catch (e) { toast("Fehler: " + e.message); return; }
   const parts = path ? path.split("/") : [];
-  const crumbs = [`<a data-p="" data-pool="">Pools</a>`]
+  const crumbs = (o.fixedPool ? [] : [`<a data-p="" data-pool="">Pools</a>`])
     .concat(pool ? [`<a data-pool="${esc(pool)}" data-p="">${esc(data.pool_name)}</a>`] : [])
     .concat(parts.map((x, i) => `<a data-pool="${esc(pool)}" data-p="${esc(parts.slice(0, i + 1).join("/"))}">${esc(x)}</a>`)).join(" / ");
-  const excluded = new Set(dz.status.config.excludes);
-  $("#dlg-body").innerHTML = `<h2>Ordner ausschließen</h2>
+  if (!dz.status) { try { dz.status = await api("dupes/status"); } catch (e) { /* egal */ } }
+  const excluded = new Set(dz.status ? dz.status.config.excludes : []);
+  $("#dlg-body").innerHTML = `<h2>${esc(o.title)}</h2>
     <div class="crumbs picker-crumbs">${crumbs}</div>
     <div class="picker">${data.folders.length ? data.folders.map((f) => {
-      const ex = excluded.has(f.pool + ":" + f.path);
+      const ex = o.markExcluded && excluded.has(f.pool + ":" + f.path);
       return `<div class="picker-row" data-pool="${esc(f.pool)}" data-p="${esc(f.path)}">
         <span class="picker-name">${pool ? "📁" : "🗄️"} ${esc(f.name)}</span>
         <span class="muted small">${f.files != null ? fmtNum(f.files) + " Dateien · " + fmtBytes(f.bytes) : ""}</span>
         ${ex ? '<span class="badge warn">ausgeschlossen</span>' : "<span>›</span>"}</div>`;
     }).join("") : '<div class="muted small" style="padding:12px">Keine Unterordner.</div>'}</div>
     <div class="row spread" style="margin-top:14px">
-      <span class="small muted">${pool ? "Ausgewählt: <b>" + esc(data.pool_name + " › " + (path || "/")) + "</b>" : "Pool wählen"}</span>
+      <span class="small muted">${pool ? (o.allowRoot && !path ? "Ausgewählt: <b>" + esc(data.pool_name) + " (ganzer Pool)</b>" : "Ausgewählt: <b>" + esc(data.pool_name + " › " + (path || "/")) + "</b>") : "Pool wählen"}</span>
       <div class="row"><button type="button" class="btn" id="fp-cancel">Abbrechen</button>
-      <button type="button" class="btn primary" id="fp-ok" ${pool && path ? "" : "disabled"}>Diesen Ordner ausschließen</button></div></div>`;
+      <button type="button" class="btn primary" id="fp-ok" ${pool && (path || o.allowRoot) ? "" : "disabled"}>${esc(o.ok)}</button></div></div>`;
   const dlg = $("#dlg");
-  dlg.querySelectorAll("[data-p]").forEach((a) => (a.onclick = () => openFolderPicker(onPick, a.dataset.pool || null, a.dataset.p)));
-  $("#fp-cancel").onclick = () => dlg.close();
-  $("#fp-ok").onclick = () => { dlg.close(); onPick(pool, path); };
+  dlg.querySelectorAll("[data-p]").forEach((a) => (a.onclick = () => openFolderPicker(onPick, a.dataset.pool || null, a.dataset.p, o)));
+  $("#fp-cancel").onclick = () => (o.onCancel ? o.onCancel() : dlg.close());
+  $("#fp-ok").onclick = () => { if (!o.keepOpen) dlg.close(); onPick(pool, path); };
   if (!dlg.open) dlg.showModal();
 }
 

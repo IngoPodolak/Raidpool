@@ -18,10 +18,11 @@ from .netshares import NetShares
 from .pools import PoolManager
 from .power import PowerManager
 from .smart import SmartMonitor
+from .smb import SambaManager
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 INGRESS_IP = "172.30.32.2"
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 log = logging.getLogger("nas")
 
@@ -42,6 +43,7 @@ class App:
         self.pools = PoolManager(self.options, self.settings, self.disks, self.index)
         self.power = PowerManager(self.options, self.settings, self.disks)
         self.dupes = DupeFinder(self.options, self.settings, self.pools, self.index)
+        self.smb = SambaManager(self.options, self.settings, self.pools)
         self.stop = threading.Event()
 
     def start(self):
@@ -52,6 +54,12 @@ class App:
             self.disks.refresh()
         self.pools.mount_all()
         self.power.apply_all()
+        try:
+            self.smb.start()
+        except Exception as err:  # noqa: BLE001
+            self.smb.error = str(err)
+            log.exception("Samba-Start fehlgeschlagen")
+        threading.Thread(target=self.smb.watchdog_loop, daemon=True, name="smb-watchdog").start()
         threading.Thread(target=self.power.keepalive_loop, daemon=True, name="keepalive").start()
         threading.Thread(target=self.dupes.scheduler_loop, daemon=True, name="dupe-scheduler").start()
         threading.Thread(target=self._smart_loop, daemon=True, name="smart").start()
@@ -145,6 +153,12 @@ class App:
             if mode == "under":
                 return self.index.under_files(pool, fpath, limit)
             return self.index.files(pid, fpath, mode, limit)
+        if path == "smb/status":
+            return self.smb.status()
+        if path == "smb/ha_users":
+            return self.smb.ha_candidates()
+        if path == "smb/conf":
+            return {"text": self.smb.render_conf()}
         if path == "dupes/status":
             return self.dupes.status()
         if path == "dupes/groups":
@@ -174,6 +188,37 @@ class App:
                     raise ValueError(f"Platte gehört zu Pool '{p['name']}' – zuerst Pool aushängen")
             self.disks.unmount(body["uuid"])
             self.disks.refresh()
+            return {"ok": True}
+        if path.startswith("smb/"):
+            action = path[4:]
+            if action == "config":
+                return self.smb.set_cfg(body)
+            if action == "share/save":
+                return self.smb.save_share(body)
+            if action == "share/remove":
+                self.smb.remove_share(body["id"])
+            elif action == "user/add":
+                self.smb.add_user(body.get("name"), body.get("password"), body.get("ha", False), body.get("display", ""))
+            elif action == "user/password":
+                self.smb.set_password(body["name"], body.get("password"))
+            elif action == "user/enabled":
+                self.smb.set_user_enabled(body["name"], body.get("enabled", True))
+            elif action == "user/remove":
+                self.smb.remove_user(body["name"])
+            elif action == "start":
+                self.smb.restarts = 0
+                self.smb.start()
+                if self.smb.error:
+                    raise RuntimeError(self.smb.error)
+            elif action == "stop":
+                self.smb.stop()
+            elif action == "restart":
+                self.smb.restarts = 0
+                self.smb.apply(restart=True)
+                if self.smb.error:
+                    raise RuntimeError(self.smb.error)
+            else:
+                raise KeyError(path)
             return {"ok": True}
         if path == "net/save":
             share = self.net.save(body)
@@ -328,6 +373,8 @@ def main():
         app.power.stop.set()
         app.dupes.stop.set()
         app.dupes.cancel.set()
+        app.smb.stop_evt.set()
+        app.smb.stop()
         threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGTERM, shutdown)
