@@ -20,6 +20,19 @@ Festplatten-Pool für Home Assistant nach dem Vorbild von StableBit DrivePool.
 Die Dateien bleiben ganz normale Dateien auf NTFS – jede Platte ist an einem Windows-PC
 weiterhin lesbar, und DrivePool kann die Platten jederzeit wieder übernehmen.
 
+## Netzwerkfreigaben
+
+Unter **Platten → + Netzwerkfreigabe** lassen sich SMB- (Windows, Synology, QNAP, …) und
+NFS-Freigaben einbinden. Sie verhalten sich danach wie eine Platte:
+
+- **In einen Pool aufnehmen** – entweder mit eigenem `PoolPart`-Ordner (Pool-Daten getrennt vom
+  restlichen Inhalt der Freigabe) oder **direkt** (der gesamte Inhalt erscheint im Pool, z. B. um
+  ein externes NAS oder einen anderen Pool einzubinden).
+- **Nach Duplikaten durchsuchen** – unter Duplikate → Einstellungen → „Zusätzlich durchsuchen“.
+
+Mit `read_only: true` werden auch Freigaben nur lesend verbunden. Netzwerkfreigaben haben keine
+SMART-Werte und keine Energieeinstellung.
+
 ## Duplikate
 
 Reiter **Duplikate** findet Dateien mit identischem Inhalt – egal ob gleicher oder anderer Name.

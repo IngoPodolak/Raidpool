@@ -58,7 +58,7 @@ def publish(pool_states, disks, smart):
             "friendly_name": f"RAIDPool {name} Problem", "device_class": "problem",
             "fehler": p["error"], "fehlende_platten": [m["uuid"] for m in p["members"] if not m["available"]]})
     for disk in disks:
-        if disk["system"]:
+        if disk["system"] or disk.get("network"):
             continue
         key = (disk["serial"] or disk["name"]).lower().replace("-", "_").replace(" ", "_")
         s = smart.get(disk["path"]) or {}

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0
+- **Netzwerkfreigaben** (SMB/CIFS und NFS) einbinden – Reiter Platten → „+ Netzwerkfreigabe“.
+  Passwörter werden getrennt in `/data` gespeichert (nicht im sichtbaren Konfigurationsordner).
+- Freigaben (und Platten) als **Pool-Mitglied**: mit eigenem PoolPart-Ordner oder
+  „vorhandenen Inhalt direkt einbinden“ (z. B. ein externes NAS oder einen anderen Pool).
+  Direkt einbinden geht auch mit aktivem Schreibschutz.
+- **Duplikatsuche über zusätzliche Quellen**: Platten oder Freigaben außerhalb der Pools
+  können mit durchsucht werden – Duplikate werden auch zwischen Pool und Quelle gefunden.
+
+## 0.3.1
+- Ordner ausschließen per Ordnerauswahl (Popup) statt Texteingabe; Ausschlüsse wirken sofort
+- Liste „Dauerhaft ignoriert“ mit „Wieder anzeigen“ (einzeln oder alle)
+- Korrektur: leere Auswahlleiste wurde manchmal angezeigt
+
 ## 0.3.0
 - Neuer Reiter **Duplikate**: findet inhaltsgleiche Dateien (z. B. doppelt heruntergeladen),
   auch mit unterschiedlichen Namen. Pool-Duplizierung zählt nicht als Duplikat.

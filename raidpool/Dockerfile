@@ -11,6 +11,8 @@ RUN apt-get update \
         mergerfs \
         fuse3 \
         ntfs-3g \
+        cifs-utils \
+        nfs-common \
         smartmontools \
         util-linux \
         e2fsprogs \

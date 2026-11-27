@@ -50,6 +50,7 @@ async function loadDupes(force) {
     dz.data = await api("dupes/groups?" + q);
     dz.key = key;
     dz.trash = await api("dupes/trash").catch(() => null);
+    dz.ignored = await api("dupes/ignored").catch(() => []);
   }
 }
 
@@ -101,6 +102,8 @@ window.renderDupes = async function (force) {
       <button class="btn" onclick="bulkSelect('none')">Keine</button></div>`}
   </div>
 
+  ${ignoredCard()}
+
   ${dz.data.groups.length ? dz.data.groups.map(groupCard).join("") :
     `<div class="card empty">${dz.showIgnored ? "Keine ignorierten Duplikate." : last ? "🎉 Keine Duplikate gefunden." : "Noch keine Suche durchgeführt."}</div>`}
   ${dz.data.total > dz.data.groups.length ? `<div class="row" style="justify-content:center;margin-bottom:80px"><button class="btn" onclick="moreDupes()">Weitere ${Math.min(50, dz.data.total - dz.data.groups.length)} von ${fmtNum(dz.data.total - dz.data.groups.length)} laden</button></div>` : '<div style="height:70px"></div>'}
@@ -113,6 +116,8 @@ window.renderDupes = async function (force) {
   $("#dz-ign").onchange = (e) => { dz.showIgnored = e.target.checked; dz.offset = 0; dz.sel.clear(); renderDupes(true); };
   const det = $("#dz-settings");
   if (det) det.ontoggle = () => { dz.settingsOpen = det.open; };
+  const ig = $("#dz-ignored");
+  if (ig) ig.ontoggle = () => { dz.ignoredOpen = ig.open; };
   renderSelbar();
 };
 
@@ -139,8 +144,14 @@ function settingsCard(st) {
     </div>
     <label class="row small"><input type="checkbox" ${c.refresh_index ? "checked" : ""} onchange="dzSet('refresh_index', this.checked)"> Dateiliste vor der Suche aktualisieren</label>
     <label class="row small"><input type="checkbox" ${c.use_trash ? "checked" : ""} onchange="dzSet('use_trash', this.checked)"> Gelöschte Dateien zuerst in den Papierkorb verschieben</label>
-    <div class="field"><label>Ordner ausschließen (einer pro Zeile, z. B. <span class="mono">Programme</span> oder <span class="mono">drivepool:Software/Treiber</span>)</label>
-      <textarea onchange="dzSet('excludes', this.value.split('\\n').map(s=>s.trim()).filter(Boolean))">${esc(c.excludes.join("\n"))}</textarea></div>
+    <div class="field"><label>Zusätzlich durchsuchen <span class="muted small">(Platten oder Netzwerkfreigaben außerhalb der Pools)</span></label>
+      <div class="excl">${(st.sources || []).length ? st.sources.map((s) => `<span class="chip">${s.network ? "🌐" : "💽"} ${esc(s.name)}${s.mounted ? "" : ' <span class="badge bad">getrennt</span>'}
+        <button type="button" title="Entfernen" onclick='removeSource(${js(s.uuid)})'>✕</button></span>`).join("") : '<span class="muted small">Nur die Pools werden durchsucht.</span>'}</div>
+      <div><button type="button" class="btn" onclick="pickSource()">+ Quelle hinzufügen …</button></div></div>
+    <div class="field"><label>Ausgeschlossene Ordner <span class="muted small">(werden sofort gespeichert)</span></label>
+      <div class="excl">${st.config.excludes.length ? st.config.excludes.map((e) => `<span class="chip">📂 ${esc(exclLabel(e))}
+        <button type="button" title="Entfernen" onclick='removeExclude(${js(e)})'>✕</button></span>`).join("") : '<span class="muted small">Keine – alle Ordner werden durchsucht.</span>'}</div>
+      <div><button type="button" class="btn" onclick="pickExclude()">+ Ordner auswählen …</button></div></div>
     <div class="row" style="justify-content:flex-end"><button class="btn primary" onclick="saveDzCfg()">Speichern</button></div>
   </details>`;
 }
@@ -247,4 +258,108 @@ window.dzDelete = () => {
     renderDupes(true);
   };
   $("#dlg").showModal();
+};
+
+// ---------------------------------------------------------------- Ausschlüsse mit Ordnerauswahl
+function exclLabel(e) {
+  if (!e.includes(":")) return "Alle Pools › " + e;
+  const [pid, ...rest] = e.split(":");
+  const pool = (state.status.pools.find((p) => p.id === pid) || {}).name || pid;
+  return pool + " › " + (rest.join(":") || "/");
+}
+async function saveExcludes(list) {
+  await api("dupes/config", { excludes: list });
+  if (dz.cfgDraft) dz.cfgDraft.excludes = list.slice();
+}
+window.removeExclude = (e) => act(() => saveExcludes(dz.status.config.excludes.filter((x) => x !== e)), "Ordner wird wieder durchsucht");
+window.pickExclude = () => openFolderPicker((pool, path) => {
+  const v = pool + ":" + path;
+  const list = dz.status.config.excludes;
+  if (list.includes(v)) { toast("Ordner ist bereits ausgeschlossen"); return; }
+  act(() => saveExcludes(list.concat([v])), "Ordner ausgeschlossen");
+});
+
+async function openFolderPicker(onPick, pool = null, path = "") {
+  let data;
+  try { data = await api(`browse?pool=${encodeURIComponent(pool || "")}&path=${encodeURIComponent(path)}`); }
+  catch (e) { toast("Fehler: " + e.message); return; }
+  const parts = path ? path.split("/") : [];
+  const crumbs = [`<a data-p="" data-pool="">Pools</a>`]
+    .concat(pool ? [`<a data-pool="${esc(pool)}" data-p="">${esc(data.pool_name)}</a>`] : [])
+    .concat(parts.map((x, i) => `<a data-pool="${esc(pool)}" data-p="${esc(parts.slice(0, i + 1).join("/"))}">${esc(x)}</a>`)).join(" / ");
+  const excluded = new Set(dz.status.config.excludes);
+  $("#dlg-body").innerHTML = `<h2>Ordner ausschließen</h2>
+    <div class="crumbs picker-crumbs">${crumbs}</div>
+    <div class="picker">${data.folders.length ? data.folders.map((f) => {
+      const ex = excluded.has(f.pool + ":" + f.path);
+      return `<div class="picker-row" data-pool="${esc(f.pool)}" data-p="${esc(f.path)}">
+        <span class="picker-name">${pool ? "📁" : "🗄️"} ${esc(f.name)}</span>
+        <span class="muted small">${f.files != null ? fmtNum(f.files) + " Dateien · " + fmtBytes(f.bytes) : ""}</span>
+        ${ex ? '<span class="badge warn">ausgeschlossen</span>' : "<span>›</span>"}</div>`;
+    }).join("") : '<div class="muted small" style="padding:12px">Keine Unterordner.</div>'}</div>
+    <div class="row spread" style="margin-top:14px">
+      <span class="small muted">${pool ? "Ausgewählt: <b>" + esc(data.pool_name + " › " + (path || "/")) + "</b>" : "Pool wählen"}</span>
+      <div class="row"><button type="button" class="btn" id="fp-cancel">Abbrechen</button>
+      <button type="button" class="btn primary" id="fp-ok" ${pool && path ? "" : "disabled"}>Diesen Ordner ausschließen</button></div></div>`;
+  const dlg = $("#dlg");
+  dlg.querySelectorAll("[data-p]").forEach((a) => (a.onclick = () => openFolderPicker(onPick, a.dataset.pool || null, a.dataset.p)));
+  $("#fp-cancel").onclick = () => dlg.close();
+  $("#fp-ok").onclick = () => { dlg.close(); onPick(pool, path); };
+  if (!dlg.open) dlg.showModal();
+}
+
+// ---------------------------------------------------------------- Dauerhaft ignoriert
+function ignoredCard() {
+  const list = dz.ignored || [];
+  if (!list.length) return "";
+  return `<details class="card settings ign" id="dz-ignored" ${dz.ignoredOpen ? "open" : ""}>
+    <summary>Dauerhaft ignoriert <span class="badge">${list.length}</span></summary>
+    <div class="row" style="justify-content:flex-end;margin-bottom:8px">
+      <button type="button" class="btn" onclick='unignore(${js(list.map((x) => x.hash))})'>Alle wieder anzeigen</button></div>
+    ${list.map((g) => {
+      const name = g.files.length ? g.files[0].path.split("/").pop() : "(Dateien nicht mehr vorhanden)";
+      return `<div class="ign-row">
+        <div class="ficon">${fileIcon(name)}</div>
+        <div style="min-width:0;flex:1">
+          <b class="ellip">${esc(name)}</b>
+          <div class="small muted">${g.size != null ? fmtBytes(g.size) + " · " : ""}${g.files.length} Dateien · ignoriert seit ${fmtTime(g.created).split(",")[0]}
+            ${g.still_present ? "" : ' · <span class="badge">aktuell nicht gefunden</span>'}</div>
+          ${g.files.map((f) => `<div class="small mono muted ellip">📂 ${esc(f.pool_name + " › " + f.path)}</div>`).join("")}
+        </div>
+        <button type="button" class="btn" onclick='unignore(${js([g.hash])})'>Wieder anzeigen</button>
+      </div>`;
+    }).join("")}
+  </details>`;
+}
+window.unignore = (hashes) => act(async () => { await api("dupes/ignore", { hashes, kind: "unignore" }); dz.key = ""; },
+  hashes.length > 1 ? "Alle werden wieder angezeigt" : "Wird wieder angezeigt");
+
+// ---------------------------------------------------------------- Zusätzliche Quellen
+async function saveSources(list) {
+  await api("dupes/config", { sources: list });
+  if (dz.cfgDraft) dz.cfgDraft.sources = list.slice();
+}
+window.removeSource = (uuid) => act(() => saveSources(dz.status.config.sources.filter((x) => x !== uuid)), "Quelle entfernt");
+window.pickSource = async () => {
+  state.disks = await api("disks");
+  const used = new Set(state.status.pools.flatMap((p) => p.members.map((m) => m.uuid)).concat(dz.status.config.sources));
+  const opts = [];
+  for (const d of state.disks) {
+    if (d.system) continue;
+    for (const p of d.partitions) if (p.mountpoint && !used.has(p.uuid)) opts.push({ d, p });
+  }
+  $("#dlg-body").innerHTML = `<h2>Quelle für die Duplikatsuche</h2>
+    <p class="muted small">Die Quelle wird zusätzlich zu den Pools durchsucht – Duplikate werden auch zwischen Pool und Quelle gefunden.</p>
+    <div class="picker">${opts.length ? opts.map(({ d, p }, i) => `<div class="picker-row" data-i="${i}">
+      <span class="picker-name">${d.network ? "🌐" : "💽"} ${esc(p.label || d.model || p.name)}</span>
+      <span class="muted small">${esc(d.path)}${p.usage ? " · " + fmtBytes(p.usage.used) + " belegt" : ""}</span><span>+</span></div>`).join("")
+      : '<div class="muted small" style="padding:12px">Keine weiteren verbundenen Platten oder Freigaben. Netzwerkfreigaben fügst du im Reiter „Platten“ hinzu.</div>'}</div>
+    <div class="row" style="justify-content:flex-end;margin-top:14px"><button type="button" class="btn" id="src-cancel">Abbrechen</button></div>`;
+  const dlg = $("#dlg");
+  dlg.querySelectorAll("[data-i]").forEach((r) => (r.onclick = () => {
+    dlg.close();
+    act(() => saveSources(dz.status.config.sources.concat([opts[+r.dataset.i].p.uuid])), "Quelle hinzugefügt – wird bei der nächsten Suche durchsucht");
+  }));
+  $("#src-cancel").onclick = () => dlg.close();
+  dlg.showModal();
 };

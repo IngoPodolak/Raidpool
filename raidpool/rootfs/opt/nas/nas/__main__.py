@@ -14,13 +14,14 @@ from . import config, sensors
 from .disks import DiskManager
 from .dupes import DupeFinder
 from .index import Index
+from .netshares import NetShares
 from .pools import PoolManager
 from .power import PowerManager
 from .smart import SmartMonitor
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 INGRESS_IP = "172.30.32.2"
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 log = logging.getLogger("nas")
 
@@ -34,6 +35,8 @@ class App:
             os.makedirs(d, exist_ok=True)
         self.settings = config.Settings()
         self.disks = DiskManager(self.options)
+        self.net = NetShares(self.options, self.settings)
+        self.disks.net = self.net
         self.smart = SmartMonitor(self.options)
         self.index = Index()
         self.pools = PoolManager(self.options, self.settings, self.disks, self.index)
@@ -42,6 +45,7 @@ class App:
         self.stop = threading.Event()
 
     def start(self):
+        self.net.auto_mount()
         if self.options["auto_mount_ntfs"]:
             self.disks.auto_mount()
         else:
@@ -146,6 +150,10 @@ class App:
         if path == "dupes/groups":
             return self.dupes.groups(int(g("offset", 0)), min(int(g("limit", 50)), 500), g("search", ""),
                                      g("ignored") == "1")
+        if path == "dupes/ignored":
+            return self.dupes.ignored_list()
+        if path == "browse":
+            return self.dupes.browse(g("pool"), g("path", ""))
         if path == "dupes/trash":
             return self.dupes.trash_info()
         if path == "smart":
@@ -165,6 +173,20 @@ class App:
                 if any(m["uuid"] == body["uuid"] for m in p["members"]) and self.pools.is_mounted(p):
                     raise ValueError(f"Platte gehört zu Pool '{p['name']}' – zuerst Pool aushängen")
             self.disks.unmount(body["uuid"])
+            self.disks.refresh()
+            return {"ok": True}
+        if path == "net/save":
+            share = self.net.save(body)
+            if body.get("mount", True):
+                try:
+                    self.net.mount(share["id"])
+                except Exception as err:  # noqa: BLE001
+                    self.disks.refresh()
+                    raise RuntimeError(f"Gespeichert, aber Einhängen fehlgeschlagen: {err}") from err
+            self.disks.refresh()
+            return share
+        if path == "net/remove":
+            self.net.remove(body["id"])
             self.disks.refresh()
             return {"ok": True}
         if path == "dupes/start":

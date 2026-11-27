@@ -59,7 +59,7 @@ class PowerManager:
 
     # ------------------------------------------------------------ Anwenden
     def apply(self, disk):
-        if disk["system"]:
+        if disk["system"] or disk.get("network"):
             return
         s = self.setting(disk)
         key = disk_key(disk)
@@ -114,7 +114,7 @@ class PowerManager:
             if config.DEV:
                 continue
             for d in list(self.disks.disks):
-                if d["system"] or self.setting(d)["mode"] != "always":
+                if d["system"] or d.get("network") or self.setting(d)["mode"] != "always":
                     continue
                 try:
                     self._touch(d)

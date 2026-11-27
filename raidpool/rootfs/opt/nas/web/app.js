@@ -137,17 +137,21 @@ window.openCreate = async (adopt) => {
     ${cands.length ? `<h3>Vorhandene DrivePool-Ordner</h3>` + cands.map((c, i) => `<label class="check"><input type="checkbox" data-c="${i}" ${adopt ? "checked" : ""}>
       <div><b>${esc(c.model || c.disk)}</b> <span class="muted small">${esc(c.disk)} ${esc(c.label)}</span><br>
       <span class="mono">${esc(c.poolpart)}</span><br><span class="muted small">${c.usage ? fmtBytes(c.usage.used) + " belegt von " + fmtBytes(c.usage.total) : ""}</span></div></label>`).join("") : ""}
-    ${!adopt ? `<h3>Weitere Platten (ohne DrivePool-Ordner)</h3>` + (empty.length ? empty.map(({ d, p }, i) => `<label class="check"><input type="checkbox" data-e="${i}" ${ro ? "disabled" : ""}>
-      <div><b>${esc(d.model || d.name)}</b> <span class="muted small">${esc(p.path)} · ${esc(p.fstype)} · ${fmtBytes(p.size)}</span>
-      ${ro ? '<br><span class="muted small">Nur mit Schreibzugriff möglich (read_only aus)</span>' : '<br><span class="muted small">Es wird ein DrivePool-kompatibler Ordner PoolPart.… angelegt, vorhandene Dateien bleiben unberührt.</span>'}</div></label>`).join("")
-      : '<div class="muted small">Keine weiteren eingehängten Platten.</div>') : ""}
+    ${!adopt ? `<h3>Weitere Platten und Netzwerkfreigaben</h3>` + (empty.length ? empty.map(({ d, p }, i) => `<label class="check"><input type="checkbox" data-e="${i}">
+      <div style="flex:1"><b>${d.network ? "🌐 " : ""}${esc(d.model || d.name)}</b> <span class="muted small">${esc(p.path)} · ${esc(p.fstype)} · ${fmtBytes(p.usage ? p.usage.total : p.size)}</span>
+      <div style="margin-top:6px"><select data-m="${i}" onclick="event.stopPropagation()">
+        <option value="pp" ${ro ? "disabled" : d.network ? "" : "selected"}>Eigenen PoolPart-Ordner anlegen${ro ? " (nur mit Schreibzugriff)" : ""}</option>
+        <option value="direct" ${ro || d.network ? "selected" : ""}>Vorhandenen Inhalt direkt einbinden</option></select></div>
+      <span class="muted small">PoolPart-Ordner: Pool-Dateien bleiben getrennt von anderen Daten. Direkt: alle Dateien der ${d.network ? "Freigabe" : "Platte"} erscheinen im Pool (z. B. externes NAS).</span></div></label>`).join("")
+      : '<div class="muted small">Keine weiteren eingehängten Platten oder Freigaben.</div>') : ""}
     <div class="field"><label>Standard-Duplizierung</label><select id="c-def"><option value="1">1× (keine)</option><option value="2">2×</option><option value="3">3×</option></select>
     <span class="muted small">Gilt für alle Ordner ohne eigene Einstellung. Bei DrivePool-Übernahme danach „Erkannte Duplizierung als Soll“ nutzen.</span></div>
     <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" value="cancel">Abbrechen</button><button class="btn primary" id="c-ok" value="ok">Anlegen</button></div>`;
   $("#c-ok").onclick = (ev) => {
     ev.preventDefault();
     const members = [...document.querySelectorAll("[data-c]:checked")].map((x) => ({ uuid: cands[x.dataset.c].uuid, poolpart: cands[x.dataset.c].poolpart }))
-      .concat([...document.querySelectorAll("[data-e]:checked")].map((x) => ({ uuid: empty[x.dataset.e].p.uuid, poolpart: "" })));
+      .concat([...document.querySelectorAll("[data-e]:checked")].map((x) => ({ uuid: empty[x.dataset.e].p.uuid,
+        poolpart: document.querySelector(`[data-m="${x.dataset.e}"]`).value === "direct" ? "." : "" })));
     $("#dlg").close();
     act(() => api("pools/create", { name: $("#c-name").value, members, default_target: +$("#c-def").value, adopt }), "Pool angelegt – Scan läuft");
   };
@@ -173,12 +177,88 @@ window.setPower = (key, v) => {
   act(() => api("disks/power", { key, mode, minutes: minutes ? +minutes : undefined }), "Energieeinstellung gespeichert");
 };
 async function loadDisks() { state.disks = await api("disks"); }
+function netCard(d) {
+  const p = d.partitions[0]; const s = d.share; const u = p.usage;
+  return `<div class="card"><div class="row spread"><b>🌐 ${esc(s.name)}</b><div class="row">
+      <span class="badge info">${s.kind.toUpperCase()}</span>${p.mountpoint ? '<span class="badge ok">verbunden</span>' : '<span class="badge bad">getrennt</span>'}</div></div>
+    <div class="muted small mono">${esc(d.path)}${s.username ? " · " + esc(s.username) : " · Gast"}</div>
+    ${u ? `<div class="bar"><div style="width:${(100 * u.used) / u.total}%;background:var(--seg-data)"></div></div>
+      <div class="muted small">${fmtBytes(u.used)} belegt · ${fmtBytes(u.free)} frei von ${fmtBytes(u.total)}</div>` : ""}
+    <div class="row" style="margin-top:6px">${p.pool ? `<span class="badge info">Pool ${esc(p.pool)}</span>` : ""}${p.poolparts.length && !p.pool ? '<span class="badge dup">DrivePool</span>' : ""}
+      ${p.poolparts.map((x) => `<span class="mono small muted">${esc(x)}</span>`).join(" ")}</div>
+    ${p.error ? `<ul class="warnings"><li>${esc(p.error)}</li></ul>` : ""}
+    <div class="row" style="margin-top:10px">
+      ${p.mountpoint ? `<button class="btn" onclick="act(()=>api('disks/unmount',{uuid:'${p.uuid}'}),'Getrennt')">Trennen</button>`
+        : `<button class="btn primary" onclick="act(()=>api('disks/mount',{uuid:'${p.uuid}'}),'Verbunden')">Verbinden</button>`}
+      <button class="btn" onclick='openNetShare(${js(s.id)})' ${p.mountpoint ? 'disabled title="Zum Bearbeiten zuerst trennen"' : ""}>Bearbeiten</button>
+      <button class="btn danger" onclick='removeNetShare(${js(s.id)}, ${js(s.name)})'>Entfernen</button></div>
+  </div>`;
+}
+window.removeNetShare = (id, name) => {
+  if (!confirm(`Netzwerkfreigabe „${name}“ entfernen?\n\nAuf dem Server wird nichts gelöscht.`)) return;
+  act(() => api("net/remove", { id }), "Freigabe entfernt");
+};
+window.openNetShare = (id) => {
+  const s = id ? (state.disks.find((d) => d.network && d.share.id === id) || {}).share : null;
+  const v = s || { kind: "smb", automount: true };
+  $("#dlg-body").innerHTML = `<h2>${s ? "Netzwerkfreigabe bearbeiten" : "Netzwerkfreigabe hinzufügen"}</h2>
+    <div class="field"><label>Typ</label><div class="seg" id="ns-kind">
+      <button type="button" data-k="smb" class="${v.kind === "smb" ? "active" : ""}">SMB / Windows / NAS</button>
+      <button type="button" data-k="nfs" class="${v.kind === "nfs" ? "active" : ""}">NFS</button></div></div>
+    <div class="settings-grid">
+      <div class="field"><label>Name</label><input type="text" id="ns-name" value="${esc(v.name || "")}" placeholder="z. B. Synology Filme"></div>
+      <div class="field"><label>Server (Name oder IP)</label><input type="text" id="ns-server" value="${esc(v.server || "")}" placeholder="192.168.0.20"></div>
+      <div class="field"><label id="ns-share-l">${v.kind === "nfs" ? "Export-Pfad" : "Freigabe"}</label><input type="text" id="ns-share" value="${esc(v.share || "")}" placeholder="${v.kind === "nfs" ? "volume1/filme" : "Filme"}"></div>
+    </div>
+    <div class="settings-grid" id="ns-auth" ${v.kind === "nfs" ? "hidden" : ""}>
+      <div class="field"><label>Benutzer <span class="muted small">(leer = Gast)</span></label><input type="text" id="ns-user" value="${esc(v.username || "")}" autocomplete="off"></div>
+      <div class="field"><label>Passwort</label><input type="password" id="ns-pass" placeholder="${s ? "unverändert lassen" : ""}" autocomplete="new-password"
+        style="font:inherit;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--fg)"></div>
+      <div class="field"><label>Domäne <span class="muted small">(optional)</span></label><input type="text" id="ns-domain" value="${esc(v.domain || "")}"></div>
+    </div>
+    <div class="field"><label>Protokollversion</label><select id="ns-ver"></select></div>
+    <label class="row small"><input type="checkbox" id="ns-auto" ${v.automount !== false ? "checked" : ""}> Beim Start automatisch verbinden</label>
+    <p class="muted small">Die Freigabe wird ${state.status.options.read_only ? "<b>nur lesend</b> (read_only aktiv)" : "mit Schreibzugriff"} eingebunden. Das Passwort wird getrennt und nicht im sichtbaren Konfigurationsordner gespeichert.</p>
+    <div class="row" style="justify-content:flex-end;margin-top:10px"><button type="button" class="btn" id="ns-cancel">Abbrechen</button>
+      <button type="button" class="btn primary" id="ns-ok">${s ? "Speichern und verbinden" : "Hinzufügen und verbinden"}</button></div>`;
+  let kind = v.kind;
+  const vers = () => {
+    const list = kind === "smb" ? [["", "Automatisch"], ["3.1.1", "SMB 3.1.1"], ["3.0", "SMB 3.0"], ["2.1", "SMB 2.1"], ["1.0", "SMB 1 (alt, unsicher)"]]
+      : [["", "Automatisch"], ["4.2", "NFS 4.2"], ["4.1", "NFS 4.1"], ["4", "NFS 4"], ["3", "NFS 3"]];
+    $("#ns-ver").innerHTML = list.map(([x, l]) => `<option value="${x}" ${x === (v.kind === kind ? v.version || "" : "") ? "selected" : ""}>${l}</option>`).join("");
+  };
+  vers();
+  document.querySelectorAll("#ns-kind button").forEach((b) => (b.onclick = () => {
+    kind = b.dataset.k;
+    document.querySelectorAll("#ns-kind button").forEach((x) => x.classList.toggle("active", x === b));
+    $("#ns-auth").hidden = kind === "nfs";
+    $("#ns-share-l").textContent = kind === "nfs" ? "Export-Pfad" : "Freigabe";
+    $("#ns-share").placeholder = kind === "nfs" ? "volume1/filme" : "Filme";
+    vers();
+  }));
+  $("#ns-cancel").onclick = () => $("#dlg").close();
+  $("#ns-ok").onclick = async () => {
+    const body = { id: s ? s.id : undefined, kind, name: $("#ns-name").value, server: $("#ns-server").value, share: $("#ns-share").value,
+      username: kind === "smb" ? $("#ns-user").value : "", password: kind === "smb" ? $("#ns-pass").value : "",
+      domain: kind === "smb" ? $("#ns-domain").value : "", version: $("#ns-ver").value, automount: $("#ns-auto").checked };
+    const btn = $("#ns-ok"); btn.disabled = true; btn.textContent = "Verbinde …";
+    try { await api("net/save", body); $("#dlg").close(); toast("Netzwerkfreigabe verbunden"); }
+    catch (e) { btn.disabled = false; btn.textContent = "Erneut versuchen"; toast("Fehler: " + e.message); if (e.message.startsWith("Gespeichert")) $("#dlg").close(); }
+    refresh();
+  };
+  $("#dlg").showModal();
+};
+
 function renderDisks() {
   const el = $("#tab-disks");
-  el.innerHTML = `<div class="row spread"><h2>Platten</h2><div class="row">
+  const nets = state.disks.filter((d) => d.network);
+  const locals = state.disks.filter((d) => !d.network);
+  el.innerHTML = `<div class="row spread"><h2>Netzwerkfreigaben</h2><button class="btn" onclick="openNetShare()">+ Netzwerkfreigabe</button></div>
+    ${nets.length ? `<div class="grid">${nets.map(netCard).join("")}</div>` : '<div class="card muted small">Noch keine Netzwerkfreigabe eingebunden. Freigaben eines anderen NAS (SMB oder NFS) können wie eine Platte in einen Pool aufgenommen oder nach Duplikaten durchsucht werden.</div>'}
+    <div class="row spread" style="margin-top:8px"><h2>Platten</h2><div class="row">
       <button class="btn" onclick="act(()=>api('smart/refresh',{}),'SMART aktualisiert')">SMART aktualisieren</button>
       <button class="btn" onclick="if(confirm('Auch schlafende Platten aufwecken?'))act(()=>api('smart/refresh',{wake:true}),'SMART aktualisiert')">inkl. schlafender</button></div></div>
-    <div class="grid">` + state.disks.map((d) => {
+    <div class="grid">` + locals.map((d) => {
       const s = d.smart;
       return `<div class="card"><div class="row spread"><b>${esc(d.model || d.name)}</b><div class="row">${d.system ? '<span class="badge info">System</span>' : ""}${smartBadge(s)}</div></div>
         <div class="muted small">${esc(d.path)} · ${fmtBytes(d.size)} · ${d.rotational ? "HDD" : "SSD"}${d.transport ? " · " + esc(d.transport.toUpperCase()) : ""}${d.serial ? " · SN " + esc(d.serial) : ""}</div>

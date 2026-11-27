@@ -132,3 +132,19 @@ textarea { width: 100%; min-height: 70px; font-family: ui-monospace, Menlo, Cons
 .spinner { width: 16px; height: 16px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .progress.big { height: 8px; border-radius: 4px; }
+.excl { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; border-radius: 999px;
+        background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); font-size: 13px; }
+.chip button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 12px; width: 20px; height: 20px; border-radius: 50%; }
+.chip button:hover { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+.picker { border: 1px solid var(--line); border-radius: 10px; max-height: 50vh; overflow: auto; }
+.picker-row { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 10px 12px;
+              border-bottom: 1px solid var(--line); cursor: pointer; }
+.picker-row:last-child { border-bottom: 0; }
+.picker-row:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.picker-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-crumbs a { cursor: pointer; }
+details.ign > summary::before { content: "🙈"; }
+.ign-row { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+.ellip { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#selbar[hidden] { display: none; }

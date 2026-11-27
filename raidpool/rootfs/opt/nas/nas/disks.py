@@ -42,6 +42,7 @@ class DiskManager:
         self.lock = threading.RLock()
         self.disks = []          # zuletzt erkannte Platten
         self.errors = {}         # uuid -> letzte Fehlermeldung beim Einhängen
+        self.net = None          # NetShares (Netzwerkfreigaben als „Platten“)
 
     # ------------------------------------------------------------ Erkennung
     def _lsblk(self):
@@ -84,6 +85,8 @@ class DiskManager:
                 "system": system,
                 "partitions": parts,
             })
+        if self.net:
+            disks += self.net.as_disks(_usage, find_poolparts)
         with self.lock:
             self.disks = disks
         return disks
@@ -136,6 +139,8 @@ class DiskManager:
     def mount(self, uuid, read_only=None):
         if read_only is None:
             read_only = self.options["read_only"]
+        if uuid.startswith("net-") and self.net:
+            return self.net.mount(uuid[4:], read_only)
         disk, part = self.partition(uuid)
         if not part:
             raise ValueError("Partition nicht gefunden")
@@ -182,6 +187,8 @@ class DiskManager:
         raise RuntimeError(last or "Einhängen fehlgeschlagen")
 
     def unmount(self, uuid):
+        if uuid.startswith("net-") and self.net:
+            return self.net.unmount(uuid[4:])
         mp = os.path.join(config.DISK_MNT, uuid)
         if config.DEV:
             return
@@ -196,7 +203,7 @@ class DiskManager:
     def auto_mount(self):
         """Alle NTFS-Datenplatten einhängen, um vorhandene DrivePool-Ordner zu finden."""
         for d in self.refresh():
-            if d["system"]:
+            if d["system"] or d.get("network"):
                 continue
             for p in d["partitions"]:
                 if p["fstype"] == "ntfs" and not p["mountpoint"] and p["size"] > 1 << 30:

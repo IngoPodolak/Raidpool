@@ -29,7 +29,7 @@ class PoolManager:
         res = []
         for m in pool["members"]:
             base = os.path.join(config.DISK_MNT, m["uuid"])
-            path = os.path.join(base, m["poolpart"]) if m.get("poolpart") else base
+            path = os.path.join(base, m["poolpart"]) if m.get("poolpart") not in (None, "", ".") else base
             res.append((m["uuid"], path, os.path.isdir(path)))
         return res
 
@@ -57,7 +57,9 @@ class PoolManager:
                 _, part = self.disks.partition(m["uuid"])
                 if not part:
                     raise ValueError(f"Partition {m['uuid']} nicht gefunden")
-                if not m.get("poolpart"):
+                if m.get("poolpart") == ".":
+                    pass   # vorhandenen Inhalt direkt einbinden (z. B. Freigabe eines externen NAS)
+                elif not m.get("poolpart"):
                     # Neue Platte: eigenen DrivePool-kompatiblen Ordner anlegen (nur mit Schreibzugriff)
                     if self.options["read_only"]:
                         raise ValueError("Für neue (leere) Platten muss 'read_only' in den "

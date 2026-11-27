@@ -122,6 +122,8 @@ class SmartMonitor:
 
     def refresh_all(self, disks, wake=None):
         for d in disks:
+            if d.get("network"):
+                continue
             try:
                 self.read(d["path"], wake)
             except Exception as err:  # noqa: BLE001

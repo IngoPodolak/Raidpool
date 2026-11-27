@@ -13,6 +13,7 @@ Hashes werden zwischengespeichert (Pfad + Größe + Änderungszeit) – erneute 
 import ctypes
 import datetime as dt
 import hashlib
+import json
 import logging
 import os
 import platform
@@ -55,6 +56,7 @@ DEFAULTS = {
     "max_mb_s": 60,
     "refresh_index": True,
     "excludes": [],
+    "sources": [],               # zusätzliche Quellen außerhalb von Pools (Platten/Netzwerkfreigaben, uuid)
     "use_trash": True,
     "trash_days": 30,
 }
@@ -169,8 +171,44 @@ class DupeFinder:
             self.settings.save()
         return self.cfg()
 
+    # ------------------------------------------------------------ Quellen
+    def sources(self):
+        """Zusätzliche Suchquellen als Pseudo-Pools: id 'src:<uuid>'."""
+        out = []
+        in_pools = {m["uuid"] for p in self.settings.data["pools"] for m in p["members"]}
+        for uuid in self.cfg()["sources"]:
+            if uuid in in_pools:
+                continue   # ist inzwischen Pool-Mitglied – wird über den Pool durchsucht
+            disk, part = self.pools.disks.partition(uuid)
+            out.append({"id": "src:" + uuid, "uuid": uuid,
+                        "name": (part or {}).get("label") or (disk or {}).get("model") or uuid,
+                        "network": bool((disk or {}).get("network")),
+                        "mounted": bool(part and part["mountpoint"]),
+                        "root": os.path.join(config.DISK_MNT, uuid)})
+        return out
+
+    def name_of(self, pid):
+        if pid.startswith("src:"):
+            for s in self.sources():
+                if s["id"] == pid:
+                    return s["name"]
+            return pid[4:]
+        return (self.settings.pool(pid) or {}).get("name", pid)
+
+    def roots(self):
+        """Alle Wurzelverzeichnisse (Pool-Mitglieder und Quellen) – für Papierkorb."""
+        res = []
+        for pool in self.settings.data["pools"]:
+            res += [b for _, b, ok in self.pools.branches(pool) if ok]
+        res += [s["root"] for s in self.sources() if s["mounted"]]
+        return res
+
     # ------------------------------------------------------------ Pfade
     def physical_paths(self, pool_id, rel, disks_csv):
+        if pool_id.startswith("src:"):
+            uuid = pool_id[4:]
+            p = os.path.join(config.DISK_MNT, uuid, rel)
+            return [(uuid, "", p)] if os.path.isfile(p) else []
         pool = self.settings.pool(pool_id)
         if not pool:
             return []
@@ -272,6 +310,11 @@ class DupeFinder:
                         raise InterruptedError
                     branches = [(u, b) for u, b, ok in self.pools.branches(pool) if ok]
                     self.index.scan(pool, branches)
+                for src in self.sources():
+                    if self.cancel.is_set():
+                        raise InterruptedError
+                    if src["mounted"]:
+                        self.index.scan({"id": src["id"]}, [(src["uuid"], src["root"])])
             self._find(cfg, pausable)
         except InterruptedError:
             status = "abgebrochen"
@@ -294,11 +337,12 @@ class DupeFinder:
         p = self.progress
         min_size = max(1, int(cfg["min_size_kb"]) * 1024)
         p["phase"] = "Kandidaten suchen"
+        active = {p["id"] for p in self.settings.data["pools"]} | {s["id"] for s in self.sources()}
         with self.lock:
-            rows = self.db.execute(
+            rows = [r for r in self.db.execute(
                 "SELECT pool, path, size, mtime, disks FROM files WHERE size >= ? AND size IN "
                 "(SELECT size FROM files WHERE size >= ? GROUP BY size HAVING count(*) > 1) "
-                "ORDER BY size DESC", (min_size, min_size)).fetchall()
+                "ORDER BY size DESC", (min_size, min_size)).fetchall() if r[0] in active]
             cache = {(r[0], r[1]): (r[2], r[3], r[4], r[5]) for r in
                      self.db.execute("SELECT pool, path, size, mtime, partial, full FROM hashes")}
         by_size = {}
@@ -399,10 +443,22 @@ class DupeFinder:
             perm = {r[0] for r in self.db.execute("SELECT hash FROM dup_ignore")}
         return perm | self.once_ignored
 
+    def _visible_counts(self):
+        """(hash, size, anzahl) je Gruppe – ohne Dateien in inzwischen ausgeschlossenen Ordnern."""
+        cfg = self.cfg()
+        with self.lock:
+            rows = self.db.execute("SELECT hash, size, pool, path FROM dup_results").fetchall()
+        counts = {}
+        for h, size, pool, path in rows:
+            if self._excluded(pool, path, cfg):
+                continue
+            c = counts.setdefault(h, [size, 0])
+            c[1] += 1
+        return [(h, s, c) for h, (s, c) in counts.items() if c > 1]
+
     def summary(self):
         ign = self._ignored()
-        with self.lock:
-            rows = self.db.execute("SELECT hash, size, count(*) FROM dup_results GROUP BY hash").fetchall()
+        rows = self._visible_counts()
         groups = [(h, s, c) for h, s, c in rows if h not in ign]
         return {"groups": len(groups), "files": sum(c for _, _, c in groups),
                 "wasted": sum(s * (c - 1) for _, s, c in groups),
@@ -420,12 +476,16 @@ class DupeFinder:
             if g is None:
                 g = groups[r["hash"]] = {"hash": r["hash"], "size": r["size"], "files": []}
                 order.append(r["hash"])
-            g["files"].append({"pool": r["pool"], "pool_name": (self.settings.pool(r["pool"]) or {}).get("name", r["pool"]),
+            g["files"].append({"pool": r["pool"], "pool_name": self.name_of(r["pool"]),
                                "path": r["path"], "mtime": r["mtime"], "disks": r["disks"]})
         res = []
         s = search.lower().strip()
+        cfg = self.cfg()
         for h in order:
             g = groups[h]
+            g["files"] = [f for f in g["files"] if not self._excluded(f["pool"], f["path"], cfg)]
+            if len(g["files"]) < 2:
+                continue
             hidden = h in ign_perm or h in self.once_ignored
             if hidden != bool(show_ignored):
                 continue
@@ -445,14 +505,55 @@ class DupeFinder:
             self.once_ignored.update(hashes)
         elif kind == "forever":
             with self.lock:
-                self.db.executemany("INSERT OR REPLACE INTO dup_ignore VALUES (?,?,?,?)",
-                                    [(h, "dauerhaft", int(time.time()), note) for h in hashes])
+                rows = []
+                for h in hashes:
+                    files = self.db.execute("SELECT pool, path, size FROM dup_results WHERE hash=? ORDER BY path",
+                                            (h,)).fetchall()
+                    info = {"note": note, "size": files[0][2] if files else None,
+                            "files": [{"pool": f[0], "path": f[1]} for f in files]}
+                    rows.append((h, "dauerhaft", int(time.time()), json.dumps(info, ensure_ascii=False)))
+                self.db.executemany("INSERT OR REPLACE INTO dup_ignore VALUES (?,?,?,?)", rows)
                 self.db.commit()
+            self.once_ignored.difference_update(hashes)
         elif kind == "unignore":
             self.once_ignored.difference_update(hashes)
             with self.lock:
                 self.db.executemany("DELETE FROM dup_ignore WHERE hash=?", [(h,) for h in hashes])
                 self.db.commit()
+
+    def ignored_list(self):
+        """Dauerhaft ignorierte Gruppen inkl. der Dateien zum Zeitpunkt des Ignorierens."""
+        with self.lock:
+            rows = self.db.execute("SELECT hash, created, note FROM dup_ignore ORDER BY created DESC").fetchall()
+            current = {}
+            for h, pool, path in self.db.execute(
+                    "SELECT hash, pool, path FROM dup_results WHERE hash IN (SELECT hash FROM dup_ignore)"):
+                current.setdefault(h, []).append({"pool": pool, "path": path})
+        out = []
+        for h, created, note in rows:
+            try:
+                info = json.loads(note or "{}")
+            except json.JSONDecodeError:
+                info = {}
+            files = current.get(h) or info.get("files") or []
+            for f in files:
+                f["pool_name"] = self.name_of(f["pool"])
+            out.append({"hash": h, "created": created, "size": info.get("size"), "files": files,
+                        "still_present": h in current})
+        return out
+
+    def browse(self, pool_id, path):
+        """Unterordner für die Ordnerauswahl (aus dem Datei-Index)."""
+        if not pool_id:
+            return {"pool": None, "path": "", "folders": [
+                {"name": p["name"], "pool": p["id"], "path": ""} for p in self.settings.data["pools"]] + [
+                {"name": s["name"], "pool": s["id"], "path": "", "source": True, "network": s["network"]}
+                for s in self.sources()]}
+        with self.lock:
+            rows = self.db.execute("SELECT path, name, files, bytes FROM folders WHERE pool=? AND parent=? "
+                                   "ORDER BY name COLLATE NOCASE", (pool_id, path)).fetchall()
+        return {"pool": pool_id, "pool_name": self.name_of(pool_id), "path": path,
+                "folders": [{"name": r[1], "pool": pool_id, "path": r[0], "files": r[2], "bytes": r[3]} for r in rows]}
 
     def last_run(self):
         with self.lock:
@@ -542,17 +643,14 @@ class DupeFinder:
     # ------------------------------------------------------------ Papierkorb
     def trash_info(self):
         total, count = 0, 0
-        for pool in self.settings.data["pools"]:
-            for _, branch, ok in self.pools.branches(pool):
-                t = os.path.join(branch, ".nas-trash")
-                if ok and os.path.isdir(t):
-                    for root, _, files in os.walk(t):
-                        for name in files:
-                            try:
-                                total += os.path.getsize(os.path.join(root, name))
-                                count += 1
-                            except OSError:
-                                pass
+        for branch in self.roots():
+            for root, _, files in os.walk(os.path.join(branch, ".nas-trash")):
+                for name in files:
+                    try:
+                        total += os.path.getsize(os.path.join(root, name))
+                        count += 1
+                    except OSError:
+                        pass
         return {"bytes": total, "files": count}
 
     def purge_trash(self, older_than_days=None):
@@ -560,18 +658,17 @@ class DupeFinder:
             return
         days = self.cfg()["trash_days"] if older_than_days is None else older_than_days
         limit = dt.datetime.now() - dt.timedelta(days=days)
-        for pool in self.settings.data["pools"]:
-            for _, branch, ok in self.pools.branches(pool):
-                t = os.path.join(branch, ".nas-trash")
-                if not ok or not os.path.isdir(t):
+        for branch in self.roots():
+            t = os.path.join(branch, ".nas-trash")
+            if not os.path.isdir(t):
+                continue
+            for name in os.listdir(t):
+                try:
+                    when = dt.datetime.strptime(name, "%Y%m%d-%H%M%S")
+                except ValueError:
                     continue
-                for name in os.listdir(t):
-                    try:
-                        when = dt.datetime.strptime(name, "%Y%m%d-%H%M%S")
-                    except ValueError:
-                        continue
-                    if when <= limit:
-                        shutil.rmtree(os.path.join(t, name), ignore_errors=True)
+                if when <= limit:
+                    shutil.rmtree(os.path.join(t, name), ignore_errors=True)
 
     # ------------------------------------------------------------ Planer
     def scheduler_loop(self):
@@ -605,4 +702,4 @@ class DupeFinder:
         return {"progress": p, "last": self.last_run(), "summary": self.summary(), "config": self.cfg(),
                 "idle": {"cpu": round(self.idle.cpu, 1), "io_mb_s": round(self.idle.io, 2),
                          "idle_for": int(self.idle.idle_for())},
-                "read_only": self.options["read_only"]}
+                "read_only": self.options["read_only"], "sources": self.sources()}
