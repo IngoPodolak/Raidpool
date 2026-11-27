@@ -268,6 +268,15 @@ class PoolManager:
                 self.mount(p)
             except Exception as err:  # noqa: BLE001
                 log.error("Pool %s: %s", p["id"], err)
+                continue
+            if p["id"] in self.index.interrupted:
+                # Dateiliste wurde beim letzten Mal nicht fertig (Neustart/Update) -> neu erstellen
+                self.index.interrupted.discard(p["id"])
+                log.info("Pool %s: Dateiliste war unvollständig – wird neu erstellt", p["id"])
+                try:
+                    self.start_scan(p)
+                except ValueError:
+                    pass
 
     # ------------------------------------------------------------ Scan & Ziele
     def start_scan(self, pool):

@@ -53,6 +53,9 @@ def effective_target(path, targets, default):
         p = parent_of(p)
 
 
+STAGE = "~scan"   # Zwischen-ID während eines Scans
+
+
 class Index:
     stale = []   # gemeinsame Liste gefundener Temp-Reste (wird von der Replikation aufgeräumt)
 
@@ -62,6 +65,11 @@ class Index:
         self.scan_locks = {}
         self.db = connect()
         self.progress = {}   # pool -> laufender Scan-Status
+        # Reste eines durch Neustart abgebrochenen Scans entfernen
+        self.interrupted = {r[0] for r in self.db.execute("SELECT pool FROM scans WHERE status='läuft'")}
+        self.db.execute("DELETE FROM files WHERE pool LIKE ?", ("%" + STAGE,))
+        self.db.execute("UPDATE scans SET status='abgebrochen' WHERE status='läuft'")
+        self.db.commit()
 
     # ------------------------------------------------------------ Scan
     def scan(self, pool, branches):
@@ -82,20 +90,25 @@ class Index:
         prog = {"running": True, "started": int(time.time()), "files": 0, "bytes": 0,
                 "disk": None, "disks_done": 0, "disks_total": len(branches), "error": None}
         self.progress[pid] = prog
+        # Neue Liste erst unter einer Zwischen-ID aufbauen und am Ende in einem Schritt austauschen.
+        # So bleibt die bisherige Liste vollständig sichtbar, auch wenn der Scan abgebrochen wird
+        # (z. B. Neustart/Update) – vorher war der Index danach nur teilweise gefüllt.
+        stage = f"{pid}{STAGE}"
         with self.lock:
-            self.db.execute("DELETE FROM files WHERE pool=?", (pid,))
+            self.db.execute("DELETE FROM files WHERE pool=?", (stage,))
             self.db.execute("INSERT OR REPLACE INTO scans VALUES (?,?,?,?,?,?,?)",
                             (pid, prog["started"], None, 0, 0, "läuft", None))
             self.db.commit()
         upsert = ("INSERT INTO files VALUES (?,?,?,?,1,?,1) ON CONFLICT(pool,path) DO UPDATE SET "
                   "copies=copies+1, disks=disks||','||excluded.disks, "
                   "consistent=consistent AND size=excluded.size, mtime=max(mtime, excluded.mtime)")
+        status, err = "abgebrochen", None
         try:
             for disk_uuid, root in branches:
                 prog["disk"] = disk_uuid
                 batch = []
                 for rel, st in self._walk(root):
-                    batch.append((pid, rel, st.st_size, int(st.st_mtime), disk_uuid))
+                    batch.append((stage, rel, st.st_size, int(st.st_mtime), disk_uuid))
                     prog["files"] += 1
                     prog["bytes"] += st.st_size
                     if len(batch) >= 5000:
@@ -103,9 +116,18 @@ class Index:
                         batch = []
                 self._flush(upsert, batch)
                 prog["disks_done"] += 1
+            with self.lock:
+                self.db.execute("DELETE FROM files WHERE pool=?", (pid,))
+                self.db.execute("UPDATE files SET pool=? WHERE pool=?", (pid, stage))
+                self.db.commit()
             self.aggregate(pool)
             status, err = "fertig", None
-        except Exception as e:  # noqa: BLE001
+        except BaseException as e:  # noqa: BLE001
+            with self.lock:
+                self.db.execute("DELETE FROM files WHERE pool=?", (stage,))
+                self.db.commit()
+            if not isinstance(e, Exception):
+                raise
             log.exception("Scan von Pool %s fehlgeschlagen", pid)
             status, err = "fehler", str(e)
             prog["error"] = err

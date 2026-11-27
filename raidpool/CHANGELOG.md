@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.3
+- **Dateiliste bleibt bei Abbruch vollständig:** Ein Scan baut die neue Liste erst im Hintergrund auf und
+  tauscht sie am Ende in einem Schritt aus. Vorher war die Liste nach einem Neustart/Update mitten im Scan
+  nur teilweise gefüllt (Ordner zeigten plötzlich nur noch wenige Dateien – die Dateien selbst waren da).
+- Wurde ein Scan abgebrochen, startet er nach dem Neustart automatisch neu.
+
 ## 0.13.2
 - Echtzeit über Samba funktionierte nicht (/dev/log ist im Container schreibgeschützt). Die Meldungen
   kommen jetzt direkt aus der Samba-Ausgabe; im Log erscheinen sie nicht.
