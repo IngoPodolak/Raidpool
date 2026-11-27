@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS folders (
   c1 INTEGER, c2 INTEGER, c3 INTEGER, inconsistent INTEGER, under INTEGER, target INTEGER,
   PRIMARY KEY (pool, path)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS folders_parent ON folders(pool, parent);
+CREATE TABLE IF NOT EXISTS dirs (
+  pool TEXT NOT NULL, disk TEXT NOT NULL, path TEXT NOT NULL, mtime INTEGER,
+  PRIMARY KEY (pool, disk, path)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS scans (
   pool TEXT PRIMARY KEY, started INTEGER, finished INTEGER, files INTEGER, bytes INTEGER,
   status TEXT, error TEXT);
@@ -104,10 +108,12 @@ class Index:
                   "consistent=consistent AND size=excluded.size, mtime=max(mtime, excluded.mtime)")
         status, err = "abgebrochen", None
         try:
+            dir_rows = []
             for disk_uuid, root in branches:
                 prog["disk"] = disk_uuid
                 batch = []
-                for rel, st in self._walk(root):
+                seen_dirs = []
+                for rel, st in self._walk(root, seen_dirs):
                     batch.append((stage, rel, st.st_size, int(st.st_mtime), disk_uuid))
                     prog["files"] += 1
                     prog["bytes"] += st.st_size
@@ -115,10 +121,14 @@ class Index:
                         self._flush(upsert, batch)
                         batch = []
                 self._flush(upsert, batch)
+                dir_rows += [(pid, disk_uuid, d, m) for d, m in seen_dirs]
                 prog["disks_done"] += 1
             with self.lock:
                 self.db.execute("DELETE FROM files WHERE pool=?", (pid,))
                 self.db.execute("UPDATE files SET pool=? WHERE pool=?", (pid, stage))
+                self.db.execute("DELETE FROM dirs WHERE pool=?", (pid,))
+                self.db.executemany("INSERT OR REPLACE INTO dirs VALUES (?,?,?,?)", dir_rows)
+                self.db.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (f"full:{pid}", str(int(time.time()))))
                 self.db.commit()
             self.aggregate(pool)
             status, err = "fertig", None
@@ -140,6 +150,132 @@ class Index:
                 self.db.commit()
         log.info("Scan %s: %s Dateien, Status %s", pid, prog["files"], status)
 
+    # ------------------------------------------------------------ Schneller Scan (nur geänderte Ordner)
+    def last_full(self, pid):
+        with self.lock:
+            r = self.db.execute("SELECT value FROM meta WHERE key=?", (f"full:{pid}",)).fetchone()
+        return int(r[0]) if r else 0
+
+    def refresh(self, pool, branches, full_after_days=7):
+        """Dateiliste aktualisieren: vollständig, wenn nötig (keine Ordnerdaten, letzter vollständiger
+        Scan älter als full_after_days), sonst nur Ordner, deren Änderungszeit sich geändert hat.
+        Eine geänderte Ordnerzeit zeigt neue, gelöschte oder umbenannte Einträge an. Inhaltliche
+        Änderungen bestehender Dateien meldet die Echtzeit-Erkennung; der Wochenscan fängt den Rest."""
+        pid = pool["id"]
+        with self.lock:
+            known_disks = {r[0] for r in self.db.execute("SELECT DISTINCT disk FROM dirs WHERE pool=?", (pid,))}
+        if (not known_disks or known_disks != {u for u, _ in branches}
+                or time.time() - self.last_full(pid) > full_after_days * 86400):
+            # erster Lauf, Platte dazu/weg (z. B. Ausfall) oder Wochenscan fällig -> vollständig
+            return self.scan(pool, branches)
+        lock = self.scan_locks.setdefault(pid, threading.Lock())
+        if not lock.acquire(blocking=False):
+            with lock:
+                return
+        try:
+            self._incremental(pool, branches)
+        finally:
+            lock.release()
+
+    def _incremental(self, pool, branches):
+        pid = pool["id"]
+        prog = {"running": True, "started": int(time.time()), "files": 0, "bytes": 0, "quick": True,
+                "disk": None, "disks_done": 0, "disks_total": len(branches), "error": None, "dirs": 0}
+        self.progress[pid] = prog
+        changed = set()
+        new_dirs, gone_dirs = [], []
+        try:
+            for disk_uuid, root in branches:
+                prog["disk"] = disk_uuid
+                with self.lock:
+                    known = {r[0]: r[1] for r in self.db.execute(
+                        "SELECT path, mtime FROM dirs WHERE pool=? AND disk=?", (pid, disk_uuid))}
+                kids = {}
+                for d in known:
+                    if d:
+                        kids.setdefault(parent_of(d), []).append(d)
+                visited = set()
+                stack = [""]
+                while stack:
+                    rd = stack.pop()
+                    visited.add(rd)
+                    prog["dirs"] += 1
+                    full = os.path.join(root, rd) if rd else root
+                    try:
+                        mt = os.stat(full).st_mtime_ns
+                    except OSError:
+                        continue
+                    if known.get(rd) == mt:
+                        stack.extend(kids.get(rd, []))      # unverändert: bekannte Unterordner, kein Auflisten
+                        continue
+                    # neu oder geändert: Ordner auflisten, Unterordner bestimmen
+                    changed.add(rd)
+                    new_dirs.append((pid, disk_uuid, rd, mt))
+                    try:
+                        with os.scandir(full) as it:
+                            for e in it:
+                                if (not rd and e.name in SKIP_NAMES) or e.name == ".nas-recycle":
+                                    continue
+                                try:
+                                    if e.is_dir(follow_symlinks=False):
+                                        stack.append(f"{rd}/{e.name}" if rd else e.name)
+                                except OSError:
+                                    pass
+                    except OSError as err:
+                        log.warning("Ordner nicht lesbar %s: %s", full, err)
+                # bekannte Ordner, die es auf dieser Platte nicht mehr gibt
+                for d in known:
+                    if d not in visited:
+                        gone_dirs.append((pid, disk_uuid, d))
+                        changed.add(d)
+                prog["disks_done"] += 1
+            # geänderte Ordner auf allen Platten neu erfassen (Kopienzahl/Gleichheit stimmen so immer)
+            upsert = ("INSERT INTO files VALUES (?,?,?,?,1,?,1) ON CONFLICT(pool,path) DO UPDATE SET "
+                      "copies=copies+1, disks=disks||','||excluded.disks, "
+                      "consistent=consistent AND size=excluded.size, mtime=max(mtime, excluded.mtime)")
+            for rd in sorted(changed):
+                lo = f"{rd}/" if rd else ""
+                with self.lock:
+                    if rd:
+                        self.db.execute("DELETE FROM files WHERE pool=? AND path >= ? AND path < ? "
+                                        "AND instr(substr(path, ?), '/') = 0",
+                                        (pid, lo, lo + "\uffff", len(lo) + 1))
+                    else:
+                        self.db.execute("DELETE FROM files WHERE pool=? AND instr(path, '/') = 0", (pid,))
+                batch = []
+                for disk_uuid, root in branches:
+                    full = os.path.join(root, rd) if rd else root
+                    try:
+                        with os.scandir(full) as it:
+                            for e in it:
+                                if (not rd and e.name in SKIP_NAMES) or e.name.startswith(".nas-tmp-"):
+                                    continue
+                                try:
+                                    if e.is_file(follow_symlinks=False):
+                                        st = e.stat(follow_symlinks=False)
+                                        batch.append((pid, lo + e.name, st.st_size, int(st.st_mtime), disk_uuid))
+                                        prog["files"] += 1
+                                        prog["bytes"] += st.st_size
+                                except OSError as err:
+                                    log.warning("Übersprungen %s: %s", lo + e.name, err)
+                    except OSError:
+                        pass
+                self._flush(upsert, batch)
+            with self.lock:
+                self.db.executemany("INSERT OR REPLACE INTO dirs VALUES (?,?,?,?)", new_dirs)
+                self.db.executemany("DELETE FROM dirs WHERE pool=? AND disk=? AND path=?", gone_dirs)
+                self.db.commit()
+            if changed:
+                self.aggregate(pool)
+            log.info("Schneller Scan %s: %d Ordner geprüft, %d geändert, %d Dateien neu erfasst",
+                     pid, prog["dirs"], len(changed), prog["files"])
+        except Exception as e:  # noqa: BLE001
+            log.exception("Schneller Scan von Pool %s fehlgeschlagen", pid)
+            prog["error"] = str(e)
+        finally:
+            prog["running"] = False
+            prog["finished"] = int(time.time())
+
     def _flush(self, sql, batch):
         if not batch:
             return
@@ -148,11 +284,17 @@ class Index:
             self.db.commit()
 
     @staticmethod
-    def _walk(root):
-        stack = [""]
+    def _walk(root, dirs=None, start=""):
+        """Alle Dateien unter root. dirs: Liste, in die (ordner, mtime_ns) jedes besuchten Ordners kommt."""
+        stack = [start]
         while stack:
             rel_dir = stack.pop()
             full = os.path.join(root, rel_dir) if rel_dir else root
+            if dirs is not None:
+                try:
+                    dirs.append((rel_dir, os.stat(full).st_mtime_ns))
+                except OSError:
+                    pass
             try:
                 with os.scandir(full) as it:
                     for e in it:

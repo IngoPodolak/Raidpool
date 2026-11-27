@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.14.0
+- **Schneller Scan:** Abgleich und Duplikatsuche lesen nur noch Ordner neu ein, deren Änderungszeit sich
+  geändert hat (neue, gelöschte, umbenannte Einträge) – meist Sekunden statt vieler Minuten, kaum
+  Plattenlast. Unveränderte Ordner werden nicht einmal aufgelistet.
+- Vollständiger Scan nur noch einmal pro Woche, beim ersten Mal, nach Platten-Änderungen (z. B. Ausfall)
+  oder auf Knopfdruck („Neu scannen“).
+
 ## 0.13.3
 - **Dateiliste bleibt bei Abbruch vollständig:** Ein Scan baut die neue Liste erst im Hintergrund auf und
   tauscht sie am Ende in einem Schritt aus. Vorher war die Liste nach einem Neustart/Update mitten im Scan

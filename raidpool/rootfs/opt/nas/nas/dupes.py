@@ -310,20 +310,16 @@ class DupeFinder:
                 for pool in list(self.settings.data["pools"]):
                     if self.cancel.is_set():
                         raise InterruptedError
-                    # Pool-Dateiliste nur neu erstellen, wenn sie älter als 6 h ist – die Duplizierung hält
-                    # sie laufend aktuell. Läuft gerade ein Scan (z. B. Abgleich), wird darauf gewartet.
-                    info = self.index.scan_info(pool["id"]) or {}
-                    fresh = info.get("status") == "fertig" and time.time() - (info.get("finished") or 0) < 6 * 3600
-                    if info.get("status") == "läuft" or not fresh:
-                        p["phase"] = f"Dateiliste {pool['name']} aktualisieren"
-                        branches = [(u, b) for u, b, ok in self.pools.branches(pool) if ok]
-                        self.index.scan(pool, branches)
+                    # Nur geänderte Ordner neu erfassen (läuft ein Scan, wird darauf gewartet)
+                    p["phase"] = f"Dateiliste {pool['name']} aktualisieren"
+                    branches = [(u, b) for u, b, ok in self.pools.branches(pool) if ok]
+                    self.index.refresh(pool, branches)
                 p["phase"] = "Index aktualisieren"
                 for src in self.sources():
                     if self.cancel.is_set():
                         raise InterruptedError
                     if src["mounted"]:
-                        self.index.scan({"id": src["id"]}, [(src["uuid"], src["root"])])
+                        self.index.refresh({"id": src["id"]}, [(src["uuid"], src["root"])])
             self._find(cfg, pausable)
         except InterruptedError:
             status = "abgebrochen"

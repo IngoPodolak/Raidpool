@@ -726,7 +726,7 @@ class Replicator:
             t.join()
         self.job["phase"] = f"Dateiliste {pool['name']} aktualisieren"
         branches = [(u, b) for u, b, ok in self.pools.branches(pool) if ok]
-        self.index.scan(pool, branches)
+        self.index.refresh(pool, branches)   # nur geänderte Ordner; einmal pro Woche vollständig
         self.cleanup_tmp()
 
     def cleanup_tmp(self):
