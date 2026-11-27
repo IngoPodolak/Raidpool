@@ -1,0 +1,9 @@
+#!/usr/bin/with-contenv bashio
+# shellcheck shell=bash
+# Beim Beenden alle Pools und Platten sauber aushängen
+for m in $(awk '$2 ~ "^/mnt/nas/pools/" {print $2}' /proc/mounts); do
+  fusermount3 -u "$m" 2>/dev/null || umount -l "$m" 2>/dev/null || true
+done
+for m in $(awk '$2 ~ "^/mnt/nas/disks/" {print $2}' /proc/mounts); do
+  umount "$m" 2>/dev/null || umount -l "$m" 2>/dev/null || true
+done

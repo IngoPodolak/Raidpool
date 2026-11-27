@@ -1,0 +1,51 @@
+name: HA RAIDPool
+version: "0.1.0"
+slug: raidpool
+description: >-
+  NAS mit Festplatten-Pool wie StableBit DrivePool (Duplizierung pro Ordner),
+  Übernahme bestehender DrivePool-Platten, SMART-Überwachung und Weboberfläche.
+url: https://github.com/IngoPodolak/raidpool
+arch:
+  - amd64
+  - aarch64
+startup: services
+boot: auto
+init: false
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:nas
+panel_title: RAIDPool
+# Zugriff auf Festplatten, FUSE (mergerfs/ntfs-3g) und Mounts
+full_access: true
+apparmor: false
+udev: true
+kernel_modules: true
+devices:
+  - /dev/fuse
+privileged:
+  - SYS_ADMIN
+  - SYS_RAWIO
+  - SYS_MODULE
+  - DAC_READ_SEARCH
+homeassistant_api: true
+hassio_api: true
+map:
+  - addon_config:rw
+  - share:rw
+  - media:rw
+options:
+  read_only: true
+  auto_mount_ntfs: true
+  smart_interval_minutes: 30
+  smart_wake_disks: false
+  publish_sensors: true
+  sensor_interval_seconds: 60
+  log_level: info
+schema:
+  read_only: bool
+  auto_mount_ntfs: bool
+  smart_interval_minutes: int(5,1440)
+  smart_wake_disks: bool
+  publish_sensors: bool
+  sensor_interval_seconds: int(15,3600)
+  log_level: list(debug|info|warning|error)
