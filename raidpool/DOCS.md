@@ -20,6 +20,23 @@ Festplatten-Pool für Home Assistant nach dem Vorbild von StableBit DrivePool.
 Die Dateien bleiben ganz normale Dateien auf NTFS – jede Platte ist an einem Windows-PC
 weiterhin lesbar, und DrivePool kann die Platten jederzeit wieder übernehmen.
 
+## Duplikate
+
+Reiter **Duplikate** findet Dateien mit identischem Inhalt – egal ob gleicher oder anderer Name.
+Kopien, die der Pool selbst zur Duplizierung anlegt, werden nicht mitgezählt.
+
+- **Vergleich:** gleiche Größe → Schnellvergleich (Anfang, Mitte, Ende) → kompletter Inhalt.
+  Gleicher Name bei anderem Inhalt ist kein Duplikat. Vor dem Löschen wird jede Datei noch einmal
+  Byte für Byte mit einer verbleibenden Kopie verglichen. Mindestens eine Datei pro Gruppe bleibt immer.
+- **Ignorieren:** „einmal“ blendet bis zur nächsten Suche aus, „immer“ dauerhaft.
+  Ganze Ordner lassen sich in den Einstellungen ausschließen.
+- **Papierkorb:** Gelöschte Dateien landen zuerst in `.nas-trash` auf der jeweiligen Platte und
+  werden nach der eingestellten Zeit endgültig gelöscht.
+- **Ausführung:** manuell, nach Zeitplan oder automatisch im Leerlauf. Die Suche läuft mit
+  niedrigster CPU- und I/O-Priorität, ist in der Geschwindigkeit begrenzt und verdrängt keine
+  anderen Daten aus dem Cache. Im Automatik-Modus pausiert sie, sobald der Rechner beschäftigt ist.
+- Löschen ist erst möglich, wenn `read_only` ausgeschaltet ist.
+
 ## Energie / Dauerbetrieb
 
 Pro Platte einstellbar unter **Platten → Energie** (Standard über die Option `power_default`):
@@ -69,4 +86,6 @@ lassen sie sich nur lesend einbinden. Windows vorher vollständig herunterfahren
 2. Duplizierung herstellen/abbauen nach Soll, Ausbalancieren, Reparatur bei Plattenausfall
 3. SMB-Freigaben und Benutzer (Namen aus HA, eigenes SMB-Passwort)
 4. SSD-Cache (fest je Pool, geteilt oder System-SSD; Mover auf die Platten)
-5. RAID-Modi (mdadm), Duplikatsuche/-entfernung, eigene HA-Integration
+5. RAID-Modi (mdadm), eigene HA-Integration
+
+✅ Duplikatsuche (0.3.0)

@@ -83,3 +83,52 @@ label.check { display: flex; gap: 10px; align-items: flex-start; padding: 8px; b
 .member .bar { height: 6px; margin: 4px 0 0; grid-column: 1 / -1; }
 ul.warnings { margin: 6px 0 0; padding-left: 18px; color: var(--bad); font-size: 12px; }
 .empty { text-align: center; padding: 32px; color: var(--muted); }
+
+/* ---------- Duplikate ---------- */
+.hero { display: grid; grid-template-columns: minmax(220px, 1.1fr) 2fr; gap: 16px; align-items: center;
+        background: linear-gradient(135deg, color-mix(in srgb, var(--seg-dup) 16%, var(--card)), var(--card) 70%); }
+@media (max-width: 720px) { .hero { grid-template-columns: 1fr; } }
+.hero .big { font-size: 34px; font-weight: 700; letter-spacing: -.5px; line-height: 1.1; }
+.hero .big small { font-size: 14px; font-weight: 500; color: var(--muted); display: block; letter-spacing: 0; margin-top: 4px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; flex-wrap: wrap; }
+.seg button { font: inherit; border: 0; background: var(--card); color: var(--fg); padding: 7px 12px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.active { background: var(--accent); color: #fff; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chips button { font: inherit; width: 40px; height: 34px; border-radius: 8px; border: 1px solid var(--line);
+                background: var(--card); color: var(--fg); cursor: pointer; }
+.chips button.on { background: color-mix(in srgb, var(--accent) 18%, transparent); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 4px 18px; }
+details.settings > summary { cursor: pointer; font-weight: 600; list-style: none; display: flex; align-items: center; gap: 8px; }
+details.settings > summary::before { content: "⚙"; font-size: 16px; }
+details.settings[open] > summary { margin-bottom: 8px; }
+input[type=number], input[type=time], textarea { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line);
+                     background: var(--card); color: var(--fg); }
+textarea { width: 100%; min-height: 70px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.toolbar input[type=text] { flex: 1 1 220px; }
+.dgroup { padding: 0; overflow: hidden; }
+.dgroup-head { display: flex; gap: 12px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.ficon { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; font-size: 20px; flex: none;
+         background: color-mix(in srgb, var(--seg-dup) 14%, transparent); }
+.dgroup-title { flex: 1 1 200px; min-width: 0; }
+.dgroup-title b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dfile { display: grid; grid-template-columns: 28px 1fr auto; gap: 2px 10px; padding: 10px 16px; align-items: center;
+         border-bottom: 1px solid var(--line); cursor: pointer; transition: background .15s; }
+.dfile:last-child { border-bottom: 0; }
+.dfile:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.dfile.del { background: color-mix(in srgb, var(--bad) 7%, transparent); }
+.dfile.del .fname { text-decoration: line-through; color: var(--bad); }
+.dfile input { width: 18px; height: 18px; accent-color: var(--bad); }
+.dfile .fpath { grid-column: 2 / 4; font-size: 12px; color: var(--muted); word-break: break-all; }
+.dfile .fpath b { color: var(--fg); font-weight: 600; }
+.fname { font-weight: 600; word-break: break-all; }
+.keep { color: var(--ok); }
+#selbar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 20; width: min(720px, 94vw);
+          background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px;
+          box-shadow: 0 10px 30px rgba(0,0,0,.18); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+#selbar .grow { flex: 1; }
+.phase { display: flex; gap: 10px; align-items: center; }
+.spinner { width: 16px; height: 16px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.progress.big { height: 8px; border-radius: 4px; }

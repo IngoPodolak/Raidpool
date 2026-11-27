@@ -253,6 +253,7 @@ async function renderDup() {
 // ---------------------------------------------------------------- Ablauf
 function switchTab(tab) {
   state.tab = tab;
+  if (tab !== "dupes") $("#selbar").hidden = true;
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   document.querySelectorAll("main > section").forEach((s) => (s.hidden = s.id !== "tab-" + tab));
   refresh();
@@ -267,8 +268,9 @@ async function refresh() {
   renderBanner();
   if (state.tab === "overview") renderOverview();
   else if (state.tab === "disks") renderDisks();
-  else await renderDup();
-  const scanning = state.status.pools.some((p) => p.scan && p.scan.status === "läuft");
+  else if (state.tab === "dup") await renderDup();
+  else await window.renderDupes();
+  const scanning = state.status.pools.some((p) => p.scan && p.scan.status === "läuft") || (state.tab === "dupes" && window.dupesRunning && window.dupesRunning());
   clearTimeout(state.timer);
   state.timer = setTimeout(refresh, scanning ? 3000 : 30000);
 }

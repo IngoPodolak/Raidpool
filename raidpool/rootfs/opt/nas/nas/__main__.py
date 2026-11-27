@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlparse
 
 from . import config, sensors
 from .disks import DiskManager
+from .dupes import DupeFinder
 from .index import Index
 from .pools import PoolManager
 from .power import PowerManager
@@ -19,7 +20,7 @@ from .smart import SmartMonitor
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 INGRESS_IP = "172.30.32.2"
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 log = logging.getLogger("nas")
 
@@ -37,6 +38,7 @@ class App:
         self.index = Index()
         self.pools = PoolManager(self.options, self.settings, self.disks, self.index)
         self.power = PowerManager(self.options, self.settings, self.disks)
+        self.dupes = DupeFinder(self.options, self.settings, self.pools, self.index)
         self.stop = threading.Event()
 
     def start(self):
@@ -47,6 +49,7 @@ class App:
         self.pools.mount_all()
         self.power.apply_all()
         threading.Thread(target=self.power.keepalive_loop, daemon=True, name="keepalive").start()
+        threading.Thread(target=self.dupes.scheduler_loop, daemon=True, name="dupe-scheduler").start()
         threading.Thread(target=self._smart_loop, daemon=True, name="smart").start()
         if self.options["publish_sensors"]:
             threading.Thread(target=self._sensor_loop, daemon=True, name="sensors").start()
@@ -138,6 +141,13 @@ class App:
             if mode == "under":
                 return self.index.under_files(pool, fpath, limit)
             return self.index.files(pid, fpath, mode, limit)
+        if path == "dupes/status":
+            return self.dupes.status()
+        if path == "dupes/groups":
+            return self.dupes.groups(int(g("offset", 0)), min(int(g("limit", 50)), 500), g("search", ""),
+                                     g("ignored") == "1")
+        if path == "dupes/trash":
+            return self.dupes.trash_info()
         if path == "smart":
             return self.smart.get(g("device"))
         if path == "log":
@@ -156,6 +166,24 @@ class App:
                     raise ValueError(f"Platte gehört zu Pool '{p['name']}' – zuerst Pool aushängen")
             self.disks.unmount(body["uuid"])
             self.disks.refresh()
+            return {"ok": True}
+        if path == "dupes/start":
+            self.dupes.start("manuell")
+            return {"ok": True}
+        if path == "dupes/stop":
+            self.dupes.stop_scan()
+            return {"ok": True}
+        if path == "dupes/config":
+            return self.dupes.set_cfg(body)
+        if path == "dupes/ignore":
+            self.dupes.ignore(body["hashes"], body["kind"], body.get("note", ""))
+            return {"ok": True}
+        if path == "dupes/delete":
+            return self.dupes.delete(body["items"])
+        if path == "dupes/purge":
+            if self.options["read_only"]:
+                raise ValueError("Schreibschutz aktiv")
+            self.dupes.purge_trash(int(body.get("days", 0)))
             return {"ok": True}
         if path == "disks/power":
             self.power.set(body["key"], body["mode"], body.get("minutes"))
@@ -276,6 +304,8 @@ def main():
     def shutdown(*_):
         app.stop.set()
         app.power.stop.set()
+        app.dupes.stop.set()
+        app.dupes.cancel.set()
         threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGTERM, shutdown)

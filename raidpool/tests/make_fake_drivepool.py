@@ -31,6 +31,40 @@ put("Fotos/2025/IMG_kaputt.jpg", {"B": 500, "C": 499}, ["B", "C"])  # abweichend
 for i in range(3):
     put(f"Dokumente/Steuer/doc{i}.pdf", 100, ["A", "B", "C"])     # 3×
 put("Musik/a.mp3", 200, ["A"])
+
+# Echte Duplikate (doppelt heruntergeladen) – inkl. Pool-Duplizierung, die NICHT zählen darf
+import random
+random.seed(7)
+
+
+def blob(n):
+    return random.randbytes(n)
+
+
+def put_bytes(rel, data, on):
+    for uuid in on:
+        p = f"{ROOT}/mnt/nas/disks/{uuid}/{disks[uuid]}/{rel}"
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "wb") as fh:
+            fh.write(data)
+
+
+film = blob(2_500_000)
+put_bytes("Filme/Der Film (2024).mkv", film, ["A", "B"])          # im Pool 2× dupliziert
+put_bytes("Downloads/Der Film (2024).mkv", film, ["C"])           # doppelt heruntergeladen
+put_bytes("Downloads/alt/Der Film (2024).mkv", film, ["A"])       # noch einmal
+foto = blob(400_000)
+put_bytes("Fotos/2024/Urlaub_001.jpg", foto, ["A", "B"])
+put_bytes("Handy-Backup/DCIM/IMG_20240712_101500.jpg", foto, ["C"])   # anderer Name, gleicher Inhalt
+setup = blob(800_000)
+put_bytes("Software/Treiber/setup.exe", setup, ["B"])
+put_bytes("Software/Tool/setup.exe", setup, ["C"])                    # gehört zu versch. Programmen
+a, b = blob(300_000), blob(300_000)
+put_bytes("Dokumente/Vertrag.pdf", a, ["A"])
+put_bytes("Downloads/Vertrag.pdf", b, ["B"])                          # gleicher Name+Größe, anderer Inhalt
+c = bytearray(blob(500_000)); d = bytearray(c); d[250_000] ^= 1
+put_bytes("Musik/Live.flac", bytes(c), ["A"])
+put_bytes("Downloads/Live.flac", bytes(d), ["C"])                     # nur Mitte unterscheidet sich
 put("Musik/b.mp3", 200, ["A", "C"])
 put("Musik/Alben/c.mp3", 200, ["B"])
 
@@ -49,5 +83,5 @@ os.makedirs(f"{ROOT}/data", exist_ok=True)
 with open(f"{ROOT}/fakedisks.json", "w") as fh:
     json.dump(fake, fh)
 with open(f"{ROOT}/data/options.json", "w") as fh:
-    json.dump({"publish_sensors": False, "log_level": "debug"}, fh)
+    json.dump({"publish_sensors": False, "log_level": "debug", "read_only": False}, fh)
 print("Test-DrivePool angelegt unter", ROOT)
