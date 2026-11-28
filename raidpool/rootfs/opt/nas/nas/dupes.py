@@ -195,6 +195,8 @@ class DupeFinder:
         self.once_ignored = set()   # Hashes, die bis zum nächsten Scan ausgeblendet sind
         self.pending = set()        # (pool, path), die gerade gelöscht werden – sofort ausgeblendet
         self.del_job = {"running": False}
+        self.del_queue = []         # [(items, keys)] – weitere Löschaufträge, nacheinander abgearbeitet
+        self.del_lock = threading.Lock()
         self.stop = threading.Event()
 
     # ------------------------------------------------------------ Einstellungen
@@ -784,30 +786,54 @@ class DupeFinder:
                     return True
 
     def delete_async(self, items):
-        """Löschen im Hintergrund: die Dateien verschwinden sofort aus der Liste (pending), der byteweise
-        Vergleich und das Verschieben in den Papierkorb laufen danach."""
+        """Löschen im Hintergrund über eine Warteschlange: die Dateien verschwinden sofort aus der Liste
+        (pending); weitere Löschaufträge werden angehängt, auch während schon gelöscht wird."""
         if self.options["read_only"]:
             raise ValueError("Schreibschutz aktiv – zum Löschen 'read_only' in den Add-on-Optionen ausschalten")
-        if self.del_job.get("running"):
-            raise ValueError("Es wird gerade noch gelöscht – bitte kurz warten")
+        items = [i for i in items if (i["pool"], i["path"]) not in self.pending]
         keys = {(i["pool"], i["path"]) for i in items}
-        self.pending |= keys
-        self.del_job = {"running": True, "total": len(keys), "done": 0, "deleted": 0, "freed": 0, "errors": [],
-                        "started": int(time.time())}
+        if not keys:
+            return {"ok": True, "total": 0}
+        with self.del_lock:
+            self.pending |= keys
+            self.del_queue.append((items, keys))
+            j = self.del_job
+            if j.get("running"):
+                j["total"] = j.get("total", 0) + len(keys)
+            else:
+                self.del_job = {"running": True, "total": len(keys), "done": 0, "deleted": 0, "freed": 0,
+                                "errors": [], "started": int(time.time())}
+                threading.Thread(target=self._delete_worker, daemon=True, name="dupes-delete").start()
+        return {"ok": True, "total": len(keys), "queued": self.del_job["total"] - self.del_job["done"]}
 
-        def run():
+    def _delete_worker(self):
+        job = self.del_job
+        while True:
+            with self.del_lock:
+                if not self.del_queue:
+                    job["running"] = False
+                    job["finished"] = int(time.time())
+                    return
+                items, keys = self.del_queue.pop(0)
             try:
-                r = self.delete(items, progress=self.del_job)
-                self.del_job.update(r)
-            except Exception as err:  # noqa: BLE001
-                self.del_job["errors"].append(str(err))
-            finally:
-                self.pending -= keys
-                self.del_job["running"] = False
-                self.del_job["finished"] = int(time.time())
+                base = {k: job[k] for k in ("done", "deleted", "freed")}
 
-        threading.Thread(target=run, daemon=True, name="dupes-delete").start()
-        return {"ok": True, "total": len(keys)}
+                class _P(dict):   # Fortschritt des Teilauftrags in den Gesamtauftrag spiegeln
+                    def __setitem__(s, k, v):
+                        dict.__setitem__(s, k, v)
+                        if k in base:
+                            job[k] = base[k] + v
+                r = self.delete(items, progress=_P())
+                job["deleted"] = base["deleted"] + r["deleted"]
+                job["freed"] = base["freed"] + r["freed"]
+                job["errors"] += r["errors"]
+                job["done"] = base["done"] + len(keys)
+            except Exception as err:  # noqa: BLE001
+                job["errors"].append(str(err))
+                job["done"] = base["done"] + len(keys)
+            finally:
+                with self.del_lock:
+                    self.pending -= keys
 
     def delete(self, items, progress=None):
         """items: [{pool, path}] – löscht die gewählten Dateien (alle Pool-Kopien davon)."""

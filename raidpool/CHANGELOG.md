@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.20.3
+- **Lösch-Warteschlange:** Weitere Löschaufträge werden auch während eines laufenden Löschvorgangs
+  angenommen, verschwinden sofort aus der Liste und werden nacheinander abgearbeitet (vorher wurden sie
+  abgelehnt und blieben stehen).
+
 ## 0.20.2
 - Ansicht „Nach Ordner“ besser lesbar: Ordnerpfad in normaler Schrift, übergeordnete Ordner grau, der
   Ordner selbst fett (statt dunkelblauem Link-Text). Links überall in der Akzentfarbe.
