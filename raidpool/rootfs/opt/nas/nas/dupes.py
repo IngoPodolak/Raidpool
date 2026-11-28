@@ -195,6 +195,11 @@ class DupeFinder:
         self.once_ignored = set()   # Hashes, die bis zum nächsten Scan ausgeblendet sind
         self.pending = set()        # (pool, path), die gerade gelöscht werden – sofort ausgeblendet
         self.del_job = {"running": False}
+        self.gen = 0                # erhöht bei jeder Änderung der Ergebnisse (für Zwischenspeicher)
+        self._base_cache = None
+        self._folders_cache = None
+        self._trash_cache = None
+        self.trash_gen = 0
         self.del_queue = []         # [(items, keys)] – weitere Löschaufträge, nacheinander abgearbeitet
         self.del_lock = threading.Lock()
         self.stop = threading.Event()
@@ -559,6 +564,7 @@ class DupeFinder:
             self.db.executemany("INSERT OR REPLACE INTO dup_results VALUES (?,?,?,?,?,?)", out)
             self.db.commit()
         self.once_ignored.clear()
+        self.gen += 1
 
     # ------------------------------------------------------------ Ergebnisse
     def _ignored(self):
@@ -580,22 +586,35 @@ class DupeFinder:
         return [(h, s, c) for h, (s, c) in counts.items() if c > 1]
 
     def summary(self):
-        ign = self._ignored()
-        rows = self._visible_counts()
-        groups = [(h, s, c) for h, s, c in rows if h not in ign]
-        return {"groups": len(groups), "files": sum(c for _, _, c in groups),
-                "wasted": sum(s * (c - 1) for _, s, c in groups),
-                "ignored": sum(1 for h, _, _ in rows if h in ign)}
+        pending = self.pending
+        groups = files = wasted = ignored = 0
+        for b in self._base_groups():
+            n = sum(1 for f in b["files"] if (f["pool"], f["path"]) not in pending) if pending else len(b["files"])
+            if n < 2:
+                continue
+            if b["ignored"]:
+                ignored += 1
+                continue
+            groups += 1
+            files += n
+            wasted += b["size"] * (n - 1)
+        return {"groups": groups, "files": files, "wasted": wasted, "ignored": ignored}
 
-    def _all_groups(self, search="", show_ignored=False, folder=None):
-        """Alle sichtbaren Gruppen (ohne Ausgeschlossene, ohne gerade gelöschte Dateien)."""
+    def _base_groups(self):
+        """Alle Gruppen aus der Datenbank (ohne Ausgeschlossene), zwischengespeichert bis sich Ergebnis,
+        Ignorierliste oder Einstellungen ändern – die Seite muss sonst bei jedem Aufruf ~100.000 Zeilen
+        neu zusammensetzen."""
+        key = (self.gen, json.dumps(self.cfg().get("excludes"), sort_keys=True), frozenset(self.once_ignored))
+        c = self._base_cache
+        if c and c[0] == key:
+            return c[1]
         with self.lock:
             ign_perm = {r[0] for r in self.db.execute("SELECT hash FROM dup_ignore")}
             rows = self.db.execute("SELECT * FROM dup_results ORDER BY hash, pool, path").fetchall()
-        pending = self.pending
+        cfg = self.cfg()
         groups, order = {}, []
         for r in rows:
-            if (r["pool"], r["path"]) in pending:
+            if self._excluded(r["pool"], r["path"], cfg):
                 continue
             g = groups.get(r["hash"])
             if g is None:
@@ -603,27 +622,35 @@ class DupeFinder:
                 order.append(r["hash"])
             g["files"].append({"pool": r["pool"], "pool_name": self.name_of(r["pool"]),
                                "path": r["path"], "mtime": r["mtime"], "disks": r["disks"]})
-        res = []
-        s = search.lower().strip()
-        cfg = self.cfg()
+        base = []
         for h in order:
             g = groups[h]
-            g["files"] = [f for f in g["files"] if not self._excluded(f["pool"], f["path"], cfg)]
             if len(g["files"]) < 2:
                 continue
-            hidden = h in ign_perm or h in self.once_ignored
-            if hidden != bool(show_ignored):
-                continue
-            if s and not any(s in f["path"].lower() for f in g["files"]):
-                continue
-            if folder and not any(_in_folder(f, folder) for f in g["files"]):
-                continue
-            names = {f["path"].rsplit("/", 1)[-1].lower() for f in g["files"]}
-            g["same_name"] = len(names) == 1
-            g["count"] = len(g["files"])
-            g["wasted"] = g["size"] * (g["count"] - 1)
             g["ignored"] = "dauerhaft" if h in ign_perm else ("einmalig" if h in self.once_ignored else None)
-            res.append(g)
+            base.append(g)
+        self._base_cache = (key, base)
+        return base
+
+    def _all_groups(self, search="", show_ignored=False, folder=None):
+        """Alle sichtbaren Gruppen (ohne Ausgeschlossene, ohne gerade gelöschte Dateien)."""
+        pending = self.pending
+        s = search.lower().strip()
+        res = []
+        for b in self._base_groups():
+            files = [f for f in b["files"] if (f["pool"], f["path"]) not in pending] if pending else b["files"]
+            if len(files) < 2:
+                continue
+            if bool(b["ignored"]) != bool(show_ignored):
+                continue
+            if s and not any(s in f["path"].lower() for f in files):
+                continue
+            if folder and not any(_in_folder(f, folder) for f in files):
+                continue
+            names = {f["path"].rsplit("/", 1)[-1].lower() for f in files}
+            res.append({"hash": b["hash"], "size": b["size"], "files": list(files), "ignored": b["ignored"],
+                        "same_name": len(names) == 1, "count": len(files),
+                        "wasted": b["size"] * (len(files) - 1)})
         return res
 
     SORTS = {
@@ -645,6 +672,14 @@ class DupeFinder:
 
     # ------------------------------------------------------------ Ordneransicht und Vorschläge
     def folders(self):
+        key = (self.gen, len(self.pending), id(self._base_groups()))
+        if self._folders_cache and self._folders_cache[0] == key:
+            return self._folders_cache[1]
+        res = self._folders()
+        self._folders_cache = (key, res)
+        return res
+
+    def _folders(self):
         """Ordner mit Duplikaten: wie viele Dateien dort eine Kopie *außerhalb* des Ordners haben
         (die können gefahrlos gelöscht werden) – plus Vorschläge für „unsortierte“ Ordner."""
         stats = {}
@@ -728,12 +763,14 @@ class DupeFinder:
                     rows.append((h, "dauerhaft", int(time.time()), json.dumps(info, ensure_ascii=False)))
                 self.db.executemany("INSERT OR REPLACE INTO dup_ignore VALUES (?,?,?,?)", rows)
                 self.db.commit()
+            self.gen += 1
             self.once_ignored.difference_update(hashes)
         elif kind == "unignore":
             self.once_ignored.difference_update(hashes)
             with self.lock:
                 self.db.executemany("DELETE FROM dup_ignore WHERE hash=?", [(h,) for h in hashes])
                 self.db.commit()
+            self.gen += 1
 
     def ignored_list(self):
         """Dauerhaft ignorierte Gruppen inkl. der Dateien zum Zeitpunkt des Ignorierens."""
@@ -902,6 +939,8 @@ class DupeFinder:
             self.db.execute("DELETE FROM dup_results WHERE hash IN "
                             "(SELECT hash FROM dup_results GROUP BY hash HAVING count(*) < 2)")
             self.db.commit()
+        self.gen += 1
+        self.trash_gen += 1
         for pid in touched:
             pool = self.settings.pool(pid)
             if pool:
@@ -922,6 +961,16 @@ class DupeFinder:
         return {"bytes": total, "files": count}
 
     def trash_list(self):
+        """Zwischengespeichert (1 min): das Durchsuchen des Papierkorbs auf allen Platten ist langsam,
+        besonders während gelöscht wird."""
+        c = self._trash_cache
+        if c and time.time() - c[0] < 60 and c[1] == self.trash_gen:
+            return c[2]
+        res = self._trash_list()
+        self._trash_cache = (time.time(), self.trash_gen, res)
+        return res
+
+    def _trash_list(self):
         """Papierkorb nach Löschvorgang (Zeitstempel) gruppiert, mit Dateiliste (gekürzt)."""
         batches = {}
         for branch in self.roots():
@@ -996,6 +1045,7 @@ class DupeFinder:
                         os.rmdir(r)
                     except OSError:
                         pass
+        self.trash_gen += 1
         return {"done": done, "errors": errors}
 
     def purge_trash(self, older_than_days=None):
@@ -1014,6 +1064,7 @@ class DupeFinder:
                     continue
                 if when <= limit:
                     shutil.rmtree(os.path.join(t, name), ignore_errors=True)
+        self.trash_gen += 1
 
     # ------------------------------------------------------------ Planer
     def scheduler_loop(self):

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.20.4
+- **Duplikate-Seite schnell, auch während gelöscht wird:** Ergebnisliste, Zusammenfassung und
+  Ordneransicht werden zwischengespeichert statt bei jedem Aufruf ~100.000 Zeilen neu aufzubauen; der
+  Papierkorb wird nur noch höchstens einmal pro Minute auf den Platten durchsucht.
+- Laufender Löschvorgang (Fortschritt, frei gewordener Platz) auch in der Live-Ansicht auf der Übersicht.
+
 ## 0.20.3
 - **Lösch-Warteschlange:** Weitere Löschaufträge werden auch während eines laufenden Löschvorgangs
   angenommen, verschwinden sofort aus der Liste und werden nacheinander abgearbeitet (vorher wurden sie

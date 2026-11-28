@@ -189,6 +189,8 @@ class LiveMonitor:
         dp = app.dupes.progress or {}
         dupes = {k: dp.get(k) for k in ("phase", "done", "total", "read_bytes", "paused", "groups")} \
             if dp.get("running") else None
+        dj = dict(app.dupes.del_job or {})
+        deleting = {k: dj.get(k) for k in ("total", "done", "deleted", "freed")} if dj.get("running") else None
         health = app.health.check if app.health.check and app.health.check.get("running") else None
         audit = getattr(app, "audit", None)
         return {
@@ -202,6 +204,7 @@ class LiveMonitor:
             "scans": scans,
             "scan_paused": app.index.paused if hasattr(app.index, "paused") else False,
             "dupes": dupes,
+            "deleting": deleting,
             "check": {k: health.get(k) for k in ("label", "tool", "phase")} if health else None,
             "smb_open": self._smb_open()[:12],
             "recent": list(audit.recent)[:12] if audit else [],

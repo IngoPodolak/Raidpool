@@ -34,6 +34,11 @@ function liveHtml(d) {
       <span class="muted">${fmtNum(p.done)} / ${fmtNum(p.total)} · ${fmtBytes(p.read_bytes)} gelesen</span></div>
       <div class="progress"><div style="width:${p.total ? (100 * p.done) / p.total : 0}%"></div></div></div>`);
   }
+  if (d.deleting) {
+    const x = d.deleting; act.push(`<div class="lv-act"><div class="row spread small"><span>🗑 <b>Duplikate löschen</b> · in den Papierkorb</span>
+      <span class="muted">${fmtNum(x.done)} / ${fmtNum(x.total)} · ${fmtBytes(x.freed)} frei</span></div>
+      <div class="progress"><div style="width:${x.total ? (100 * x.done) / x.total : 0}%"></div></div></div>`);
+  }
   if (d.check) act.push(`<div class="lv-act small">🩺 <b>Dateisystem-Prüfung</b> ${esc(d.check.label)} · ${esc(d.check.phase || "")}</div>`);
   if (r.queue) act.push(`<div class="lv-act small">⏳ ${fmtNum(r.queue)} Datei(en) warten auf Duplizierung${(d.cache || []).length ? " – erst wenn der SSD-Cache verteilt ist" : ""}</div>`);
 
