@@ -2,6 +2,7 @@
 import json
 import logging
 import mimetypes
+import re
 import os
 import signal
 import sys
@@ -27,7 +28,7 @@ from .smb import SambaManager
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 INGRESS_IP = "172.30.32.2"
-VERSION = "0.20.0"
+VERSION = "0.20.1"
 
 log = logging.getLogger("nas")
 
@@ -514,9 +515,15 @@ def make_handler(app):
                 return
             with open(full, "rb") as fh:
                 body = fh.read()
+            if name == "index.html":
+                # Versionsnummer an Skripte/Styles hängen: nach einem Update lädt der Browser sicher die neuen Dateien
+                body = re.sub(rb'(src|href)="([\w./-]+\.(?:js|css))"',
+                              lambda m: m.group(1) + b'="' + m.group(2) + b"?v=" + VERSION.encode() + b'"', body)
             self.send_response(200)
             self.send_header("Content-Type", mimetypes.guess_type(full)[0] or "application/octet-stream")
             self.send_header("Content-Length", str(len(body)))
+            # index.html nie zwischenspeichern, Skripte nur mit passender Versionsnummer
+            self.send_header("Cache-Control", "no-cache" if name == "index.html" else "public, max-age=86400")
             self.end_headers()
             self.wfile.write(body)
 

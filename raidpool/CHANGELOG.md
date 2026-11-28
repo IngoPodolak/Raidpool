@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.20.1
+- Nach einem Update zeigt die Weboberfläche sicher die neue Version (Browser hielt bisher alte Skripte
+  im Zwischenspeicher, neue Funktionen fehlten bis zum harten Neuladen).
+
 ## 0.20.0
 - **Duplikate sortieren:** nach Platzverschwendung, Dateigröße, Anzahl Kopien, Ordner, Dateiname, neueste
   oder älteste zuerst (wird gemerkt).
