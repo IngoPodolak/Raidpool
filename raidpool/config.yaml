@@ -1,5 +1,5 @@
 name: RAIDPool
-version: "0.20.1"
+version: "0.20.2"
 slug: raidpool
 description: >-
   NAS mit Festplatten-Pool wie StableBit DrivePool (Duplizierung pro Ordner),

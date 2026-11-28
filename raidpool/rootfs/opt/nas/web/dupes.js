@@ -268,6 +268,12 @@ function suggestionsCard() {
   </div>`;
 }
 
+function folderLabel(x) {
+  const p = x.path || ""; const i = p.lastIndexOf("/");
+  const parent = i < 0 ? "" : p.slice(0, i + 1); const last = i < 0 ? p : p.slice(i + 1);
+  return `<span class="fl-icon">📂</span><span class="muted">${esc(x.pool_name)} › ${esc(parent)}</span><b>${esc(last || "(oberste Ebene)")}</b>`;
+}
+
 function foldersCard() {
   const f = dz.folders;
   if (!f) return '<div class="card empty">Ordner werden geladen …</div>';
@@ -278,7 +284,7 @@ function foldersCard() {
       <th style="text-align:right" title="Dateien, von denen es in einem anderen Ordner eine Kopie gibt">auch woanders</th>
       <th style="text-align:right">frei werdend</th><th></th></tr></thead><tbody>
     ${rows.map((x) => `<tr>
-      <td><a href="#" onclick='dzFolder({pool:${js(x.pool)}, pool_name:${js(x.pool_name)}, path:${js(x.path)}});return false'>📂 ${esc(x.pool_name)} › ${esc(x.path || "(oberste Ebene)")}</a></td>
+      <td><a class="flink" href="#" title="Nur Duplikate in diesem Ordner zeigen" onclick='dzFolder({pool:${js(x.pool)}, pool_name:${js(x.pool_name)}, path:${js(x.path)}});return false'>${folderLabel(x)}</a></td>
       <td style="text-align:right">${fmtNum(x.files)}</td><td style="text-align:right">${fmtNum(x.safe)}</td>
       <td style="text-align:right">${fmtBytes(x.bytes)}</td>
       <td style="text-align:right;white-space:nowrap">

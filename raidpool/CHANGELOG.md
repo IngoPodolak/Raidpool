@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.20.2
+- Ansicht „Nach Ordner“ besser lesbar: Ordnerpfad in normaler Schrift, übergeordnete Ordner grau, der
+  Ordner selbst fett (statt dunkelblauem Link-Text). Links überall in der Akzentfarbe.
+
 ## 0.20.1
 - Nach einem Update zeigt die Weboberfläche sicher die neue Version (Browser hielt bisher alte Skripte
   im Zwischenspeicher, neue Funktionen fehlten bis zum harten Neuladen).

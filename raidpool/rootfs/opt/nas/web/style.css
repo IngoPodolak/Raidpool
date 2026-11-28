@@ -1,4 +1,5 @@
 :root {
+a { color: var(--accent); }
   --bg: #f4f5f7; --card: #fff; --fg: #1c1f24; --muted: #6b7280; --line: #e3e5e8;
   --accent: #03a9f4; --ok: #2e9d57; --warn: #e3a008; --bad: #d64545;
   --seg-data: #03a9f4; --seg-dup: #7c5cff; --seg-other: #9aa3ad; --seg-free: #e6e9ed;
@@ -191,3 +192,8 @@ input.pw { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px soli
 .card table.tbl th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--line); }
 .card table.tbl td { padding: 6px 8px; border-bottom: 1px solid var(--line); }
 .card table.tbl tr:hover td { background: rgba(255,255,255,.03); }
+a.flink { color: var(--fg); text-decoration: none; word-break: break-word; }
+a.flink:hover b { color: var(--accent); text-decoration: underline; }
+a.flink .fl-icon { margin-right: 6px; }
+.factions a { color: var(--accent); text-decoration: none; }
+.factions a:hover { text-decoration: underline; }
