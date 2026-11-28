@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.20.0
+- **Duplikate sortieren:** nach Platzverschwendung, Dateigröße, Anzahl Kopien, Ordner, Dateiname, neueste
+  oder älteste zuerst (wird gemerkt).
+- **Ansicht „Nach Ordner“:** alle Ordner mit Duplikaten, wie viele ihrer Dateien auch woanders liegen und wie
+  viel frei würde – mit „Markieren“ (alles in diesem Ordner) und „Behalten“ (Kopien woanders markieren).
+- **Ordner-Aktionen an jeder Datei:** „alle hier markieren“ und „nur diesen Ordner“ (zeigt nur Gruppen mit
+  Dateien in diesem Ordner). Markieren wirkt über *alle* Gruppen, nicht nur die geladenen; die letzte
+  Kopie einer Datei bleibt immer.
+- **Vorschläge (Mustererkennung):** erkennt Sammelordner wie „Unsortiert“, „Download“, „DCIM“, „Import“ oder
+  Ordner, deren Dateien sortiert in mehreren anderen Ordnern liegen – „Alle markieren“ mit einem Klick.
+  Außerdem Kopien am Namen („Foto (1).jpg“, „Foto - Kopie.jpg“), deren Original daneben liegt.
+- **Löschen im Hintergrund:** markierte Dateien verschwinden sofort aus der Liste; Vergleich und Verschieben
+  in den Papierkorb laufen mit Fortschrittsanzeige weiter.
+- **Papierkorb** als eigener Bereich: je Löschvorgang Dateiliste, „Wiederherstellen“ und „Endgültig löschen“,
+  dazu „Alles endgültig löschen“.
+
 ## 0.19.5
 - **Schöneres HA-Dashboard:** Tortendiagramme in TB mit Anteilen in %, Pool-Diagramm in voller Breite;
   je Platte ein kleines Diagramm „xx % belegt“ (zwei nebeneinander) und darunter eine Zeile mit

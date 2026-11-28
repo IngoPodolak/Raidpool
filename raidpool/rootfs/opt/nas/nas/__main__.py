@@ -27,7 +27,7 @@ from .smb import SambaManager
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 INGRESS_IP = "172.30.32.2"
-VERSION = "0.19.5"
+VERSION = "0.20.0"
 
 log = logging.getLogger("nas")
 
@@ -248,14 +248,17 @@ class App:
         if path == "dupes/status":
             return self.dupes.status()
         if path == "dupes/groups":
+            folder = {"pool": g("fpool"), "path": g("fpath", ""), "sub": g("fsub", "1") == "1"} if g("fpool") else None
             return self.dupes.groups(int(g("offset", 0)), min(int(g("limit", 50)), 500), g("search", ""),
-                                     g("ignored") == "1")
+                                     g("ignored") == "1", g("sort", "wasted"), folder)
+        if path == "dupes/folders":
+            return self.dupes.folders()
         if path == "dupes/ignored":
             return self.dupes.ignored_list()
         if path == "browse":
             return self.dupes.browse(g("pool"), g("path", ""))
         if path == "dupes/trash":
-            return self.dupes.trash_info()
+            return self.dupes.trash_list()
         if path == "smart":
             return self.smart.get(g("device"))
         if path == "log":
@@ -412,7 +415,14 @@ class App:
             self.dupes.ignore(body["hashes"], body["kind"], body.get("note", ""))
             return {"ok": True}
         if path == "dupes/delete":
-            return self.dupes.delete(body["items"])
+            return self.dupes.delete_async(body["items"])
+        if path == "dupes/select":
+            if body.get("kind") == "pattern":
+                return self.dupes.select_pattern()
+            return self.dupes.select_folder(body["pool"], body.get("path", ""), body.get("mode", "mark"),
+                                            body.get("sub", True))
+        if path == "dupes/trash_action":
+            return self.dupes.trash_action(body["stamp"], body["action"], body.get("paths"))
         if path == "dupes/purge":
             if self.options["read_only"]:
                 raise ValueError("Schreibschutz aktiv")

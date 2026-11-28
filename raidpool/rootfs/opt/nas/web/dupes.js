@@ -3,9 +3,12 @@
 
 const dz = {
   status: null, data: null, key: "", offset: 0, search: "", showIgnored: false,
-  sel: new Map(),          // "pool\npath" -> {hash, size}
+  sel: new Map(),          // "pool\npath" -> {hash, size, count}
   cfgDraft: null, settingsOpen: false,
+  sort: "wasted", view: "groups", folder: null, folders: null, trashOpen: false,
 };
+try { const v = JSON.parse(localStorage.getItem("raidpool.dz") || "{}"); dz.sort = v.sort || dz.sort; dz.view = v.view || dz.view; } catch (e) { /* egal */ }
+function dzSave() { try { localStorage.setItem("raidpool.dz", JSON.stringify({ sort: dz.sort, view: dz.view })); } catch (e) { /* egal */ } }
 const DAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
 const selKey = (f) => f.pool + "\n" + f.path;
 window.dupesRunning = () => !!(dz.status && dz.status.progress && dz.status.progress.running);
@@ -44,13 +47,17 @@ function pathParts(files) {
 async function loadDupes(force) {
   dz.status = await api("dupes/status");
   const last = dz.status.last || {};
-  const key = [last.id, last.status, dz.search, dz.showIgnored, dz.offset].join("|");
+  const dj = dz.status.delete_job || {};
+  const key = [last.id, last.status, dz.search, dz.showIgnored, dz.offset, dz.sort,
+               dz.folder ? dz.folder.pool + dz.folder.path : "", dj.running, dj.finished].join("|");
   if (force || key !== dz.key || !dz.data) {
-    const q = `offset=0&limit=${50 + dz.offset}&search=${encodeURIComponent(dz.search)}&ignored=${dz.showIgnored ? 1 : 0}`;
-    dz.data = await api("dupes/groups?" + q);
+    let q = `offset=0&limit=${50 + dz.offset}&search=${encodeURIComponent(dz.search)}&ignored=${dz.showIgnored ? 1 : 0}&sort=${dz.sort}`;
+    if (dz.folder) q += `&fpool=${encodeURIComponent(dz.folder.pool)}&fpath=${encodeURIComponent(dz.folder.path)}&fsub=1`;
+    const [data, trash, ignored, folders] = await Promise.all([
+      api("dupes/groups?" + q), api("dupes/trash").catch(() => null), api("dupes/ignored").catch(() => []),
+      dz.showIgnored ? Promise.resolve(null) : api("dupes/folders").catch(() => null)]);
+    dz.data = data; dz.trash = trash; dz.ignored = ignored; dz.folders = folders;
     dz.key = key;
-    dz.trash = await api("dupes/trash").catch(() => null);
-    dz.ignored = await api("dupes/ignored").catch(() => []);
   }
 }
 
@@ -93,7 +100,18 @@ window.renderDupes = async function (force) {
 
   ${settingsCard(st)}
 
+  ${deleteJobCard(st)}
+  ${dz.showIgnored ? "" : suggestionsCard()}
+
   <div class="toolbar">
+    <div class="seg">
+      <button class="${dz.view === "groups" ? "active" : ""}" onclick="dzView('groups')">Gruppen</button>
+      <button class="${dz.view === "folders" ? "active" : ""}" onclick="dzView('folders')">Nach Ordner</button>
+    </div>
+    ${dz.view === "groups" ? `<label class="row small">Sortieren:
+      <select onchange="dzSort(this.value)">${[["wasted", "Platzverschwendung"], ["size", "Dateigröße"], ["count", "Anzahl Kopien"],
+        ["folder", "Ordner"], ["name", "Dateiname"], ["newest", "Neueste zuerst"], ["oldest", "Älteste zuerst"]]
+        .map(([v, t]) => `<option value="${v}" ${dz.sort === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>` : ""}
     <input type="text" id="dz-search" placeholder="Suchen nach Name oder Ordner …" value="${esc(dz.search)}">
     <label class="row small"><input type="checkbox" id="dz-ign" ${dz.showIgnored ? "checked" : ""}> Ignorierte anzeigen</label>
     ${dz.showIgnored ? "" : `<div class="row small"><span class="muted">Automatisch markieren:</span>
@@ -105,11 +123,16 @@ window.renderDupes = async function (force) {
 
   ${ignoredCard()}
 
-  ${dz.data.groups.length ? dz.data.groups.map(groupCard).join("") :
-    `<div class="card empty">${dz.showIgnored ? "Keine ignorierten Duplikate." : last ? "🎉 Keine Duplikate gefunden." : "Noch keine Suche durchgeführt."}</div>`}
-  ${dz.data.total > dz.data.groups.length ? `<div class="row" style="justify-content:center;margin-bottom:80px"><button class="btn" onclick="moreDupes()">Weitere ${Math.min(50, dz.data.total - dz.data.groups.length)} von ${fmtNum(dz.data.total - dz.data.groups.length)} laden</button></div>` : '<div style="height:70px"></div>'}
-  ${dz.trash && dz.trash.files ? `<div class="small muted" style="text-align:center;margin-bottom:90px">Papierkorb: ${fmtNum(dz.trash.files)} Dateien, ${fmtBytes(dz.trash.bytes)} – wird nach ${st.config.trash_days} Tagen automatisch geleert
-     · <a href="#" onclick="purgeTrash();return false">jetzt leeren</a></div>` : ""}
+  ${dz.folder ? `<div class="card row spread" style="padding:10px 14px"><span>📂 Nur Duplikate mit Dateien in <b>${esc(dz.folder.pool_name || "")} › ${esc(dz.folder.path || "(gesamt)")}</b></span>
+     <div class="row"><button class="btn" onclick='markFolder(${js(dz.folder.pool)}, ${js(dz.folder.path)}, "mark")'>Alle hier markieren</button>
+     <button class="btn" onclick='markFolder(${js(dz.folder.pool)}, ${js(dz.folder.path)}, "keep")'>Diesen Ordner behalten</button>
+     <button class="btn" onclick="dzFolder(null)">✕ Filter aufheben</button></div></div>` : ""}
+
+  ${dz.view === "folders" && !dz.showIgnored ? foldersCard() : (dz.data.groups.length ? dz.data.groups.map(groupCard).join("") :
+    `<div class="card empty">${dz.showIgnored ? "Keine ignorierten Duplikate." : last ? "🎉 Keine Duplikate gefunden." : "Noch keine Suche durchgeführt."}</div>`)}
+  ${dz.view === "groups" && dz.data.total > dz.data.groups.length ? `<div class="row" style="justify-content:center;margin-bottom:20px"><button class="btn" onclick="moreDupes()">Weitere ${Math.min(50, dz.data.total - dz.data.groups.length)} von ${fmtNum(dz.data.total - dz.data.groups.length)} laden</button></div>` : ""}
+  ${trashCard(st)}
+  <div style="height:90px"></div>
   `;
   const s = $("#dz-search");
   s.onkeydown = (e) => { if (e.key === "Enter") { dz.search = s.value; dz.offset = 0; renderDupes(true); } };
@@ -117,6 +140,8 @@ window.renderDupes = async function (force) {
   $("#dz-ign").onchange = (e) => { dz.showIgnored = e.target.checked; dz.offset = 0; dz.sel.clear(); renderDupes(true); };
   const det = $("#dz-settings");
   if (det) det.ontoggle = () => { dz.settingsOpen = det.open; };
+  const tr = $("#dz-trash");
+  if (tr) tr.ontoggle = () => { dz.trashOpen = tr.open; };
   const ig = $("#dz-ignored");
   if (ig) ig.ontoggle = () => { dz.ignoredOpen = ig.open; };
   renderSelbar();
@@ -189,11 +214,116 @@ function groupCard(g) {
         <input type="checkbox" ${on ? "checked" : ""} ${g.ignored ? "disabled" : ""} onclick="event.stopPropagation(); toggleDel(${js(g.hash)}, ${i})">
         <div class="fname">${esc(f.path.split("/").pop())}</div>
         <div class="small ${on ? "" : "keep"}" style="text-align:right;white-space:nowrap">${on ? "wird gelöscht" : "✓ bleibt"} · ${fmtTime(f.mtime).split(",")[0]}</div>
-        <div class="fpath">📂 ${paths[i]}</div>
+        <div class="fpath">📂 ${paths[i]}
+          <span class="factions" onclick="event.stopPropagation()">
+            <a href="#" title="Alle Duplikate in diesem Ordner zum Löschen markieren" onclick='markFolder(${js(f.pool)}, ${js(parentOf(f.path))}, "mark");return false'>alle hier markieren</a> ·
+            <a href="#" title="Nur Gruppen mit Dateien in diesem Ordner zeigen" onclick='dzFolder({pool:${js(f.pool)}, pool_name:${js(f.pool_name || "")}, path:${js(parentOf(f.path))}});return false'>nur diesen Ordner</a></span></div>
       </div>`;
     }).join("")}
   </div>`;
 }
+
+function parentOf(p) { const i = p.lastIndexOf("/"); return i < 0 ? "" : p.slice(0, i); }
+window.dzView = (v) => { dz.view = v; dzSave(); renderDupes(); };
+window.dzSort = (v) => { dz.sort = v; dz.offset = 0; dzSave(); renderDupes(true); };
+window.dzFolder = (f) => { dz.folder = f; dz.offset = 0; if (f) dz.view = "groups"; renderDupes(true); window.scrollTo(0, 0); };
+
+function addItems(items, label) {
+  // je Gruppe muss mindestens eine Datei bleiben (auch mit der schon bestehenden Auswahl)
+  const per = {};
+  for (const v of dz.sel.values()) per[v.hash] = (per[v.hash] || 0) + 1;
+  let added = 0, skipped = 0;
+  for (const it of items) {
+    const k = it.pool + "\n" + it.path;
+    if (dz.sel.has(k)) continue;
+    if ((per[it.hash] || 0) + 1 >= (it.count || 99)) { skipped++; continue; }
+    dz.sel.set(k, { hash: it.hash, size: it.size, count: it.count, pool: it.pool, path: it.path });
+    per[it.hash] = (per[it.hash] || 0) + 1; added++;
+  }
+  toast(`${fmtNum(added)} Dateien ${label}` + (skipped ? ` · ${fmtNum(skipped)} übersprungen (letzte Kopie bleibt)` : ""));
+  renderDupes();
+}
+window.markFolder = (pool, path, mode) => act(async () => {
+  const r = await api("dupes/select", { pool, path, mode, sub: true });
+  addItems(r.items, mode === "keep" ? "außerhalb des Ordners markiert" : "im Ordner markiert");
+});
+window.markCopies = () => act(async () => { const r = await api("dupes/select", { kind: "pattern" }); addItems(r.items, "mit Kopie-Namen markiert"); });
+
+function suggestionsCard() {
+  const f = dz.folders; if (!f) return "";
+  const sg = f.suggestions || []; const cp = f.copies || {};
+  if (!sg.length && !cp.files) return "";
+  return `<div class="card">
+    <h3 style="margin-top:0">💡 Vorschläge</h3>
+    <div class="small muted" style="margin-bottom:8px">Ordner, deren Dateien größtenteils auch in anderen Ordnern liegen – z. B. ein „Unsortiert“-Ordner neben sortierten Alben.
+      Markiert werden nur Dateien, von denen außerhalb eine Kopie bleibt.</div>
+    ${sg.map((x) => `<div class="sugg">
+      <div class="grow"><b>📂 ${esc(x.pool_name)} › ${esc(x.path || "(oberste Ebene)")}</b>
+        <div class="small muted">${fmtNum(x.safe)} von ${fmtNum(x.files)} Dateien liegen auch woanders · ${fmtBytes(x.bytes)} · ${esc(x.reason)}</div></div>
+      <button class="btn" onclick='dzFolder({pool:${js(x.pool)}, pool_name:${js(x.pool_name)}, path:${js(x.path)}})'>Ansehen</button>
+      <button class="btn primary" onclick='markFolder(${js(x.pool)}, ${js(x.path)}, "mark")'>Alle markieren</button></div>`).join("")}
+    ${cp.files ? `<div class="sugg"><div class="grow"><b>🗐 Kopien am Namen erkannt</b>
+        <div class="small muted">${fmtNum(cp.files)} Dateien wie „Foto (1).jpg“ oder „Foto - Kopie.jpg“, deren Original daneben liegt · ${fmtBytes(cp.bytes)}</div></div>
+      <button class="btn primary" onclick="markCopies()">Alle markieren</button></div>` : ""}
+  </div>`;
+}
+
+function foldersCard() {
+  const f = dz.folders;
+  if (!f) return '<div class="card empty">Ordner werden geladen …</div>';
+  if (!f.folders.length) return '<div class="card empty">🎉 Keine Duplikate gefunden.</div>';
+  const q = dz.search.toLowerCase();
+  const rows = f.folders.filter((x) => !q || x.path.toLowerCase().includes(q));
+  return `<div class="card"><table class="tbl"><thead><tr><th>Ordner</th><th style="text-align:right">Duplikate</th>
+      <th style="text-align:right" title="Dateien, von denen es in einem anderen Ordner eine Kopie gibt">auch woanders</th>
+      <th style="text-align:right">frei werdend</th><th></th></tr></thead><tbody>
+    ${rows.map((x) => `<tr>
+      <td><a href="#" onclick='dzFolder({pool:${js(x.pool)}, pool_name:${js(x.pool_name)}, path:${js(x.path)}});return false'>📂 ${esc(x.pool_name)} › ${esc(x.path || "(oberste Ebene)")}</a></td>
+      <td style="text-align:right">${fmtNum(x.files)}</td><td style="text-align:right">${fmtNum(x.safe)}</td>
+      <td style="text-align:right">${fmtBytes(x.bytes)}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn" style="padding:2px 8px;font-size:12px" ${x.safe ? "" : "disabled"} onclick='markFolder(${js(x.pool)}, ${js(x.path)}, "mark")' title="Alle Dateien dieses Ordners markieren, die woanders noch liegen">Markieren</button>
+        <button class="btn" style="padding:2px 8px;font-size:12px" ${x.safe ? "" : "disabled"} onclick='markFolder(${js(x.pool)}, ${js(x.path)}, "keep")' title="Diesen Ordner behalten, die Kopien woanders markieren">Behalten</button></td></tr>`).join("")}
+    </tbody></table>
+    ${f.total > f.folders.length ? `<div class="small muted">Die ${fmtNum(f.folders.length)} Ordner mit den meisten Duplikaten von ${fmtNum(f.total)}.</div>` : ""}</div>`;
+}
+
+function deleteJobCard(st) {
+  const j = st.delete_job || {};
+  if (j.running) {
+    const pct = j.total ? Math.round((100 * j.done) / j.total) : 0;
+    return `<div class="card"><div class="phase"><div class="spinner"></div><b>Löschen läuft</b>
+      <span class="small muted">${fmtNum(j.done)} / ${fmtNum(j.total)} · ${fmtBytes(j.freed)} frei</span></div>
+      <div class="progress"><div style="width:${pct}%"></div></div>
+      <div class="small muted" style="margin-top:4px">Jede Datei wird vor dem Löschen Byte für Byte mit der bleibenden verglichen. Die Dateien sind schon aus der Liste verschwunden.</div></div>`;
+  }
+  if (j.finished && Date.now() / 1000 - j.finished < 120 && (j.errors || []).length) {
+    return `<div class="card"><b>Löschen beendet:</b> ${fmtNum(j.deleted)} Dateien, ${fmtBytes(j.freed)} frei · ${j.errors.length} übersprungen
+      <details><summary class="small">Übersprungene anzeigen</summary><div class="mono small">${j.errors.slice(0, 200).map(esc).join("<br>")}</div></details></div>`;
+  }
+  return "";
+}
+
+function trashCard(st) {
+  const t = dz.trash; if (!t || !t.files) return "";
+  return `<details class="card" id="dz-trash" ${dz.trashOpen ? "open" : ""}>
+    <summary><b>🗑 Papierkorb</b> <span class="small muted">· ${fmtNum(t.files)} Dateien · ${fmtBytes(t.bytes)} · wird nach ${st.config.trash_days} Tagen automatisch geleert</span></summary>
+    <div class="row" style="justify-content:flex-end;margin:8px 0"><button class="btn danger" onclick="purgeTrash()">Alles endgültig löschen</button></div>
+    ${t.batches.map((b) => `<div class="sugg" style="align-items:flex-start">
+      <div class="grow"><b>Gelöscht ${b.time ? fmtTime(b.time) : esc(b.stamp)}</b> <span class="small muted">· ${fmtNum(b.files)} Dateien · ${fmtBytes(b.bytes)}</span>
+        <details><summary class="small">Dateien anzeigen</summary><div class="mono small" style="max-height:200px;overflow:auto">${b.sample.map(esc).join("<br>")}${b.files > b.sample.length ? "<br>…" : ""}</div></details></div>
+      <button class="btn" onclick='trashDo(${js(b.stamp)}, "restore")'>Wiederherstellen</button>
+      <button class="btn danger" onclick='trashDo(${js(b.stamp)}, "purge")'>Endgültig löschen</button></div>`).join("")}
+  </details>`;
+}
+window.trashDo = (stamp, action) => {
+  if (action === "purge" && !confirm("Diese Dateien endgültig löschen? Das lässt sich nicht rückgängig machen.")) return;
+  act(async () => {
+    const r = await api("dupes/trash_action", { stamp, action });
+    dz.key = "";
+    if (r.errors && r.errors.length) toast(`${r.errors.length} Dateien nicht wiederhergestellt (existieren schon)`);
+  }, action === "purge" ? "Endgültig gelöscht" : "Wiederhergestellt – erscheint nach dem nächsten Scan wieder im Pool");
+};
 
 function groupByHash(h) { return dz.data.groups.find((g) => g.hash === h); }
 window.toggleDel = (h, i) => {
@@ -203,7 +333,7 @@ window.toggleDel = (h, i) => {
   else {
     const others = g.files.filter((x) => x !== f && !dz.sel.has(selKey(x))).length;
     if (!others) { toast("Mindestens eine Datei pro Gruppe muss bleiben"); return; }
-    dz.sel.set(k, { hash: h, size: g.size, pool: f.pool, path: f.path });
+    dz.sel.set(k, { hash: h, size: g.size, count: g.count, pool: f.pool, path: f.path });
   }
   renderDupes();
 };
@@ -226,7 +356,7 @@ window.ignoreGroup = (h, kind) => act(async () => {
 }, { once: "Bis zur nächsten Suche ausgeblendet", forever: "Wird dauerhaft ignoriert", unignore: "Wird wieder angezeigt" }[kind]);
 window.moreDupes = () => { dz.offset += 50; renderDupes(true); };
 window.purgeTrash = () => {
-  if (!confirm("Papierkorb jetzt endgültig leeren?")) return;
+  if (!confirm("Den ganzen Papierkorb jetzt endgültig leeren? Das lässt sich nicht rückgängig machen.")) return;
   act(async () => { await api("dupes/purge", { days: 0 }); dz.key = ""; }, "Papierkorb geleert");
 };
 
@@ -256,10 +386,9 @@ window.dzDelete = () => {
   $("#dz-ok").onclick = async (ev) => {
     ev.preventDefault(); $("#dlg").close();
     try {
-      const r = await api("dupes/delete", { items: items.map(({ pool, path }) => ({ pool, path })) });
+      await api("dupes/delete", { items: items.map(({ pool, path }) => ({ pool, path })) });
       dz.sel.clear(); dz.key = "";
-      toast(`${fmtNum(r.deleted)} Dateien gelöscht, ${fmtBytes(r.freed)} frei` + (r.errors.length ? ` – ${r.errors.length} übersprungen` : ""));
-      if (r.errors.length) console.warn(r.errors);
+      toast(`${fmtNum(items.length)} Dateien werden ${trash ? "in den Papierkorb verschoben" : "gelöscht"}`);
     } catch (e) { toast("Fehler: " + e.message); }
     renderDupes(true);
   };

@@ -180,3 +180,14 @@ input.pw { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px soli
 .lv-bar.warn > div { background: var(--warn); }
 .lv-bar.bad > div { background: var(--bad); }
 .lv-file { padding: 3px 0; border-bottom: 1px solid var(--line); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Duplikate: Vorschläge, Ordneransicht, Papierkorb */
+.sugg { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.sugg .grow { flex: 1; min-width: 220px; }
+.factions { margin-left: 8px; font-size: 12px; opacity: 0; transition: opacity .15s; white-space: nowrap; }
+.dfile:hover .factions { opacity: 1; }
+@media (hover: none) { .factions { opacity: 1; } }
+.dtbl, .card table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.card table.tbl th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.card table.tbl td { padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.card table.tbl tr:hover td { background: rgba(255,255,255,.03); }

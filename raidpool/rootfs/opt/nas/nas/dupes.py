@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import platform
 import shutil
 import threading
@@ -46,6 +47,29 @@ CREATE TABLE IF NOT EXISTS dup_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT, started INTEGER, finished INTEGER, trigger TEXT,
   status TEXT, groups INTEGER, files INTEGER, wasted INTEGER, read_bytes INTEGER, error TEXT, scope TEXT);
 """
+
+# Ordnernamen, die auf unsortierte Sammelordner hindeuten (für Vorschläge)
+UNSORTED_HINTS = ("unsortiert", "unsorted", "sortieren", "import", "download", "neuer ordner", "new folder",
+                  "dcim", "camera", "kamera", "handy", "whatsapp", "backup", "sicherung", "temp", "tmp", "alt",
+                  "kopie", "copy", "inbox", "eingang", "upload", "sync")
+# Dateinamen von Kopien: „x (1).jpg“, „x - Kopie.jpg“, „x - Kopie (2).jpg“, „x copy 3.jpg“, „x_1.jpg“ nicht (zu unsicher)
+COPY_RE = re.compile(r"(\s\(\d+\)|\s-\s(kopie|copy)(\s\(\d+\))?|\s(kopie|copy)(\s\d+)?)(\.[^.]+)?$", re.I)
+
+
+def _parent(path):
+    return path.rsplit("/", 1)[0] if "/" in path else ""
+
+
+def _in_folder(f, folder):
+    """folder: {pool, path, sub}; sub=True schließt Unterordner ein."""
+    if f["pool"] != folder["pool"]:
+        return False
+    d = _parent(f["path"])
+    p = folder["path"]
+    if not p:
+        return True if folder.get("sub", True) else d == ""
+    return d == p or (folder.get("sub", True) and d.startswith(p + "/"))
+
 
 DEFAULTS = {
     "mode": "manual",            # manual | schedule | auto
@@ -169,6 +193,8 @@ class DupeFinder:
         self.cancel = threading.Event()
         self.progress = {"running": False}
         self.once_ignored = set()   # Hashes, die bis zum nächsten Scan ausgeblendet sind
+        self.pending = set()        # (pool, path), die gerade gelöscht werden – sofort ausgeblendet
+        self.del_job = {"running": False}
         self.stop = threading.Event()
 
     # ------------------------------------------------------------ Einstellungen
@@ -559,14 +585,16 @@ class DupeFinder:
                 "wasted": sum(s * (c - 1) for _, s, c in groups),
                 "ignored": sum(1 for h, _, _ in rows if h in ign)}
 
-    def groups(self, offset=0, limit=50, search="", show_ignored=False):
-        ign_perm = set()
+    def _all_groups(self, search="", show_ignored=False, folder=None):
+        """Alle sichtbaren Gruppen (ohne Ausgeschlossene, ohne gerade gelöschte Dateien)."""
         with self.lock:
             ign_perm = {r[0] for r in self.db.execute("SELECT hash FROM dup_ignore")}
-            rows = self.db.execute("SELECT * FROM dup_results ORDER BY size DESC, hash, pool, path").fetchall()
-        groups = {}
-        order = []
+            rows = self.db.execute("SELECT * FROM dup_results ORDER BY hash, pool, path").fetchall()
+        pending = self.pending
+        groups, order = {}, []
         for r in rows:
+            if (r["pool"], r["path"]) in pending:
+                continue
             g = groups.get(r["hash"])
             if g is None:
                 g = groups[r["hash"]] = {"hash": r["hash"], "size": r["size"], "files": []}
@@ -586,14 +614,103 @@ class DupeFinder:
                 continue
             if s and not any(s in f["path"].lower() for f in g["files"]):
                 continue
+            if folder and not any(_in_folder(f, folder) for f in g["files"]):
+                continue
             names = {f["path"].rsplit("/", 1)[-1].lower() for f in g["files"]}
             g["same_name"] = len(names) == 1
             g["count"] = len(g["files"])
             g["wasted"] = g["size"] * (g["count"] - 1)
             g["ignored"] = "dauerhaft" if h in ign_perm else ("einmalig" if h in self.once_ignored else None)
             res.append(g)
-        res.sort(key=lambda g: -g["wasted"])
+        return res
+
+    SORTS = {
+        "wasted": lambda g: -g["wasted"],
+        "size": lambda g: -g["size"],
+        "count": lambda g: (-g["count"], -g["size"]),
+        "name": lambda g: g["files"][0]["path"].rsplit("/", 1)[-1].lower(),
+        "folder": lambda g: min(f["path"].rsplit("/", 1)[0].lower() for f in g["files"]),
+        "newest": lambda g: -max(f["mtime"] or 0 for f in g["files"]),
+        "oldest": lambda g: min(f["mtime"] or 0 for f in g["files"]),
+    }
+
+    def groups(self, offset=0, limit=50, search="", show_ignored=False, sort="wasted", folder=None):
+        res = self._all_groups(search, show_ignored, folder)
+        res.sort(key=self.SORTS.get(sort, self.SORTS["wasted"]))
+        for g in res[offset:offset + limit]:
+            g["files"].sort(key=lambda f: f["path"].lower())
         return {"total": len(res), "groups": res[offset:offset + limit]}
+
+    # ------------------------------------------------------------ Ordneransicht und Vorschläge
+    def folders(self):
+        """Ordner mit Duplikaten: wie viele Dateien dort eine Kopie *außerhalb* des Ordners haben
+        (die können gefahrlos gelöscht werden) – plus Vorschläge für „unsortierte“ Ordner."""
+        stats = {}
+        for g in self._all_groups():
+            dirs = {(f["pool"], _parent(f["path"])) for f in g["files"]}
+            for f in g["files"]:
+                key = (f["pool"], _parent(f["path"]))
+                st = stats.setdefault(key, {"pool": f["pool"], "pool_name": f["pool_name"], "path": key[1],
+                                            "files": 0, "safe": 0, "bytes": 0, "inside": 0, "_other": set()})
+                st["files"] += 1
+                st["_other"] |= dirs - {key}
+                if len(dirs) > 1:
+                    st["safe"] += 1            # es gibt eine Kopie in einem anderen Ordner
+                    st["bytes"] += g["size"]
+                else:
+                    st["inside"] += 1          # alle Kopien liegen in diesem Ordner
+        for st in stats.values():
+            st["spread"] = len(st.pop("_other"))   # in wie viele andere Ordner sich die Kopien verteilen
+        out = sorted(stats.values(), key=lambda x: (-x["safe"], -x["bytes"]))
+        # Vorschläge: Ordner, deren Duplikate fast alle auch woanders liegen; „unsortiert“-Namen bevorzugt
+        sugg = []
+        for st in out:
+            if st["safe"] < 3:
+                continue
+            name = st["path"].rsplit("/", 1)[-1].lower()
+            last = st["path"].rsplit("/", 1)[-1].lower()
+            hint = next((w for w in UNSORTED_HINTS
+                         if re.search(r"(^|[\s_\-.(])" + re.escape(w) + r"($|[\s_\-.)0-9])", last)), None)
+            share = st["safe"] / max(st["files"], 1)
+            score = st["safe"] * (3 if hint else 1) * share
+            # Sammelordner: die Kopien seiner Dateien sind auf mehrere andere Ordner verteilt (z. B. ein
+            # „Unsortiert“-Ordner, dessen Bilder in verschiedenen Alben liegen). Ein Album, dessen Dateien
+            # nur in *einem* anderen Ordner doppelt sind, ist eher das Ziel als die Quelle.
+            if hint or (share >= 0.8 and st["spread"] >= 2):
+                sugg.append(dict(st, score=score * max(1, st["spread"]),
+                                 reason=(f"Name enthält „{hint}“" if hint else
+                                         f"{round(100 * share)} % der Dateien liegen sortiert in {st['spread']} anderen Ordnern"),
+                                 name=name))
+        sugg.sort(key=lambda x: -x["score"])
+        pattern = self.select_pattern(count_only=True)
+        return {"folders": out[:300], "total": len(out), "suggestions": sugg[:6], "copies": pattern}
+
+    def select_folder(self, pool, folder, mode="mark", sub=True):
+        """Auswahl für einen Ordner über *alle* Gruppen.
+        mode=mark: Dateien in diesem Ordner markieren (nur, wo eine Kopie außerhalb bleibt).
+        mode=keep: diesen Ordner behalten – die Kopien in anderen Ordnern markieren."""
+        target = {"pool": pool, "path": folder.strip("/"), "sub": sub}
+        items = []
+        for g in self._all_groups():
+            inside = [f for f in g["files"] if _in_folder(f, target)]
+            outside = [f for f in g["files"] if not _in_folder(f, target)]
+            if not inside or not outside:
+                continue
+            pick = inside if mode == "mark" else outside
+            items += [{"hash": g["hash"], "size": g["size"], "count": len(g["files"]), "pool": f["pool"], "path": f["path"]} for f in pick]
+        return {"items": items}
+
+    def select_pattern(self, count_only=False):
+        """Mustererkennung: Dateien wie „Foto (1).jpg“, „Foto - Kopie.jpg“, „Foto copy 2.jpg“ markieren,
+        wenn in der Gruppe eine Datei ohne dieses Muster bleibt."""
+        items = []
+        for g in self._all_groups():
+            copies = [f for f in g["files"] if COPY_RE.search(f["path"].rsplit("/", 1)[-1])]
+            if copies and len(copies) < len(g["files"]):
+                items += [{"hash": g["hash"], "size": g["size"], "count": len(g["files"]), "pool": f["pool"], "path": f["path"]} for f in copies]
+        if count_only:
+            return {"files": len(items), "bytes": sum(i["size"] for i in items)}
+        return {"items": items}
 
     def ignore(self, hashes, kind, note=""):
         if kind == "once":
@@ -666,7 +783,33 @@ class DupeFinder:
                 if not x:
                     return True
 
-    def delete(self, items):
+    def delete_async(self, items):
+        """Löschen im Hintergrund: die Dateien verschwinden sofort aus der Liste (pending), der byteweise
+        Vergleich und das Verschieben in den Papierkorb laufen danach."""
+        if self.options["read_only"]:
+            raise ValueError("Schreibschutz aktiv – zum Löschen 'read_only' in den Add-on-Optionen ausschalten")
+        if self.del_job.get("running"):
+            raise ValueError("Es wird gerade noch gelöscht – bitte kurz warten")
+        keys = {(i["pool"], i["path"]) for i in items}
+        self.pending |= keys
+        self.del_job = {"running": True, "total": len(keys), "done": 0, "deleted": 0, "freed": 0, "errors": [],
+                        "started": int(time.time())}
+
+        def run():
+            try:
+                r = self.delete(items, progress=self.del_job)
+                self.del_job.update(r)
+            except Exception as err:  # noqa: BLE001
+                self.del_job["errors"].append(str(err))
+            finally:
+                self.pending -= keys
+                self.del_job["running"] = False
+                self.del_job["finished"] = int(time.time())
+
+        threading.Thread(target=run, daemon=True, name="dupes-delete").start()
+        return {"ok": True, "total": len(keys)}
+
+    def delete(self, items, progress=None):
         """items: [{pool, path}] – löscht die gewählten Dateien (alle Pool-Kopien davon)."""
         if self.options["read_only"]:
             raise ValueError("Schreibschutz aktiv – zum Löschen 'read_only' in den Add-on-Optionen ausschalten")
@@ -697,6 +840,8 @@ class DupeFinder:
                 results["errors"].append(f"Verbleibende Datei nicht gefunden: {keep[0]['path']}")
                 continue
             for f in dels:
+                if progress is not None:
+                    progress["done"] = progress.get("done", 0) + 1
                 phys = self.physical_paths(f["pool"], f["path"], f["disks"])
                 if not phys:
                     results["errors"].append(f"Nicht gefunden: {f['path']}")
@@ -718,6 +863,8 @@ class DupeFinder:
                     continue
                 results["deleted"] += 1
                 results["freed"] += f["size"] * len(phys)
+                if progress is not None:
+                    progress["deleted"], progress["freed"] = results["deleted"], results["freed"]
                 touched.add(f["pool"])
                 with self.lock:
                     self.db.execute("DELETE FROM dup_results WHERE pool=? AND path=?", (f["pool"], f["path"]))
@@ -747,6 +894,83 @@ class DupeFinder:
                     except OSError:
                         pass
         return {"bytes": total, "files": count}
+
+    def trash_list(self):
+        """Papierkorb nach Löschvorgang (Zeitstempel) gruppiert, mit Dateiliste (gekürzt)."""
+        batches = {}
+        for branch in self.roots():
+            t = os.path.join(branch, ".nas-trash")
+            if not os.path.isdir(t):
+                continue
+            for stamp in os.listdir(t):
+                b = batches.setdefault(stamp, {"stamp": stamp, "files": 0, "bytes": 0, "sample": []})
+                base = os.path.join(t, stamp)
+                for root, _, names in os.walk(base):
+                    for n in names:
+                        p = os.path.join(root, n)
+                        try:
+                            b["bytes"] += os.path.getsize(p)
+                        except OSError:
+                            continue
+                        b["files"] += 1
+                        rel = os.path.relpath(p, base)
+                        if len(b["sample"]) < 300 and rel not in b["sample"]:
+                            b["sample"].append(rel)
+        out = []
+        for b in sorted(batches.values(), key=lambda x: x["stamp"], reverse=True):
+            try:
+                b["time"] = int(dt.datetime.strptime(b["stamp"], "%Y%m%d-%H%M%S").timestamp())
+            except ValueError:
+                b["time"] = None
+            out.append(b)
+        return {"batches": out, "files": sum(b["files"] for b in out), "bytes": sum(b["bytes"] for b in out)}
+
+    def trash_action(self, stamp, action, paths=None):
+        """action=purge: endgültig löschen; action=restore: an den alten Platz zurück.
+        paths: nur diese Dateien (relativ), sonst den ganzen Löschvorgang."""
+        if self.options["read_only"]:
+            raise ValueError("Schreibschutz aktiv")
+        if not re.fullmatch(r"\d{8}-\d{6}", stamp or ""):
+            raise ValueError("Ungültiger Eintrag")
+        done, errors = 0, []
+        for branch in self.roots():
+            base = os.path.join(branch, ".nas-trash", stamp)
+            if not os.path.isdir(base):
+                continue
+            targets = [os.path.join(base, p) for p in paths] if paths else [base]
+            for tgt in targets:
+                if not os.path.realpath(tgt).startswith(os.path.realpath(base)):
+                    continue
+                if action == "purge":
+                    if os.path.isdir(tgt):
+                        shutil.rmtree(tgt, ignore_errors=True)
+                    elif os.path.exists(tgt):
+                        os.remove(tgt)
+                    done += 1
+                elif action == "restore":
+                    walk = [(r, n) for r, _, ns in os.walk(tgt) for n in ns] if os.path.isdir(tgt) else \
+                        [(os.path.dirname(tgt), os.path.basename(tgt))]
+                    for r, n in walk:
+                        src = os.path.join(r, n)
+                        rel = os.path.relpath(src, base)
+                        dest = os.path.join(branch, rel)
+                        if os.path.exists(dest):
+                            errors.append(f"Existiert schon: {rel}")
+                            continue
+                        try:
+                            os.makedirs(os.path.dirname(dest), exist_ok=True)
+                            os.rename(src, dest)
+                            done += 1
+                        except OSError as err:
+                            errors.append(f"{rel}: {err}")
+            # leere Ordner im Papierkorb aufräumen
+            for r, ds, ns in sorted(os.walk(base), key=lambda x: -len(x[0])):
+                if not ds and not ns:
+                    try:
+                        os.rmdir(r)
+                    except OSError:
+                        pass
+        return {"done": done, "errors": errors}
 
     def purge_trash(self, older_than_days=None):
         if self.options["read_only"]:
@@ -801,4 +1025,4 @@ class DupeFinder:
         return {"progress": p, "last": self.last_run(), "summary": self.summary(), "config": self.cfg(),
                 "idle": {"cpu": round(self.idle.cpu, 1), "io_mb_s": round(self.idle.io, 2),
                          "idle_for": int(self.idle.idle_for())},
-                "read_only": self.options["read_only"], "sources": self.sources()}
+                "read_only": self.options["read_only"], "sources": self.sources(), "delete_job": self.del_job}
